@@ -5,30 +5,115 @@
 #include <sys/stat.h>
 #include<string.h>
 #include<errno.h>
+#define PRINTF_FLUSH(fmt, ...) do { \
+    printf(fmt, ##__VA_ARGS__); \
+    fflush(stdout); \
+} while (0)
+// 全局变量
+struct super_block m_sb;
+const char* disk_path = "/root/data/PFS/diskimg";
+
+// 记录当前已经被使用的最大的inode的id
+short int cur_inode_id = 1;
+// 记录当前已经被使用的最大的数据块号的id(根据数据块进行编号)
+short int cur_data_blk_id = -1;
+
+struct inode_table_entry inode_table[INODE_AREA_BLOCK_NUM];
+
 
 // 每个索引块指向的内容都属于同一个文件
 // 同一个文件分配的数据块可以不连续，只需要把块地址都放到同一个索引块中即可（按顺序）
 // 需要增加分配空闲块和回收数据块的方法，更好地管理数据块
 // 需要增加分配inode号的方法，更好地管理inode
 
+// 不考虑超出最大文件数的情况
+// mode=1表示返回空闲数据块
+// mode=2表示返回空闲inode号
+void get_free_data_blk(short int* ids, int num, int mode)
+{
+    FILE* reader = NULL;
+    reader = fopen(disk_path, "r+");
+    if (mode == 1)
+    {
+        PRINTF_FLUSH("申请空闲数据块\n");
+        fseek(reader, m_sb.first_blk_of_databitmap * BLOCK_SIZE, SEEK_SET);
+    }
+    else
+    {
+        PRINTF_FLUSH("申请空闲inode号\n");
+        fseek(reader, m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE, SEEK_SET);
+    }
+    
+    long max_byte_num = 0;
+    if (mode == 1)
+    {
+        max_byte_num = m_sb.databitmap_size * BLOCK_SIZE;
+    }
+    else
+    {
+        max_byte_num = m_sb.inodebitmap_size * BLOCK_SIZE;
+    }
 
-struct super_block m_sb;
-const char* disk_path = "/home/mars/PFS/diskimg";
-// 记录当前已经被使用的最大的inode的id
-short int cur_inode_id = 1;
-// 记录当前已经被使用的最大的数据块号的id(根据数据块进行编号)
-short int cur_data_blk_id = -1;
+    unsigned char cur_byte;
+    // 已经获得多少个空闲块号
+    int count_ids = 0;
+    // 已经读取了多少个字节
+    int byte_count = 0;
+    // 当读取字节数大于或等于BLOCK_SIZE时或者已经获得足够空闲块时，停止循环
+    while (byte_count < max_byte_num && count_ids < num)
+    {
+        fread(&cur_byte, sizeof(unsigned char), 1, reader);
+        for (int i = 0; i < 8; i++)
+        {
+            // 检查当前字节的每一位
+            if ((cur_byte & (1 << i)) == 0) // 如果当前位是0
+            {
+                PRINTF_FLUSH("当前字节数：%d, 当前bit：%d\n", byte_count, i);
+                // 置为1
+                cur_byte |= (1 << i);
+                // 获得空闲块inode号
+                if (mode == 2)
+                {
+                    ids[count_ids++] = byte_count * 8 + i + 1;
+                }
+                // 获得空闲数据块号
+                else
+                {
+                    ids[count_ids++] = m_sb.first_blk + byte_count * 8 + i;
+                }
+                
+                if (count_ids >= num)
+                {
+                    break;
+                }
+            }
+        }
+        byte_count++;
+    }
+    fclose(reader);
+    if (count_ids == num)
+    {
+        PRINTF_FLUSH("成功申请得到和预期一致的%d个空闲块或inode号\n", count_ids);
+    }
+    else if (count_ids > num)
+    {
+        PRINTF_FLUSH("申请得到多于预期的%d个空闲块或inode号\n", count_ids);
+    }
+    else
+    {
+        PRINTF_FLUSH("申请得到少于预期的%d个空闲块或inode号\n", count_ids);
+    }
+}
 
 
-struct inode_table_entry inode_table[INODE_AREA_BLOCK_NUM];
 // 先读取超级块的内容
 void get_sb_info() {
-    printf("get_sb_info begin\n");
+    PRINTF_FLUSH("get_sb_info begin\n");
     FILE* reader = fopen(disk_path, "rb");
     fread(&m_sb, sizeof(struct super_block), 1, reader);
-    printf("fs_size: %ld\nfirst_blk: %ld\ndatasize: %ld\nfirst_node: %ld\n", m_sb.fs_size, m_sb.first_blk, m_sb.datasize, m_sb.first_inode);
+    PRINTF_FLUSH("fs_size: %ld\nfirst_blk: %ld\ndatasize: %ld\nfirst_node: %ld\n", m_sb.fs_size, m_sb.first_blk, m_sb.datasize, m_sb.first_inode);
     fclose(reader);
-    printf("get_sb_info end\n");
+    PRINTF_FLUSH("get_sb_info end\n");
 }
 
 struct inode root_inode;
@@ -39,7 +124,7 @@ int read_data_block(short int addr,struct data_block* data_blk)
     reader = fopen(disk_path, "rb");
     if (NULL == reader)
     {
-        printf("read_data_block中diskimg打开失败！\n");
+        PRINTF_FLUSH("read_data_block中diskimg打开失败！\n");
         perror("Error");
         return -1;
     }
@@ -50,11 +135,11 @@ int read_data_block(short int addr,struct data_block* data_blk)
 }
 int get_root_inode(struct inode* tmp_node)
 {
-    printf("get_root_inode begin\n");
+    PRINTF_FLUSH("get_root_inode begin\n");
     FILE* reader = fopen(disk_path, "rb");
     if (reader == NULL) {
-        printf("get_root_inode中diskimg打开失败\n");
-        printf("get_root_inode end\n");
+        PRINTF_FLUSH("get_root_inode中diskimg打开失败\n");
+        PRINTF_FLUSH("get_root_inode end\n");
         return -1;
     }
     else
@@ -62,14 +147,14 @@ int get_root_inode(struct inode* tmp_node)
         // fseek(reader, m_sb.first_inode * BLOCK_SIZE + (root_inode.inode_id- 1) * sizeof(struct inode), SEEK_SET);
         // struct inode tmp_node;
         // fread(&tmp_node, sizeof(struct inode), 1, reader);
-        // printf("%hd, %hd\n", tmp_node.st_ino, tmp_node.addr[0]);
+        // PRINTF_FLUSH("%hd, %hd\n", tmp_node.st_ino, tmp_node.addr[0]);
 
-        printf("inodetable:\ninode_table[0].inode_id:, %hd, inode_table[0].file_name: %s\n", inode_table[0].inode_id, inode_table[0].file_name);
+        PRINTF_FLUSH("inodetable:\ninode_table[0].inode_id:, %hd, inode_table[0].file_name: %s\n", inode_table[0].inode_id, inode_table[0].file_name);
         fseek(reader, m_sb.first_inode * BLOCK_SIZE, SEEK_SET);
         fread(tmp_node, sizeof(struct inode), 1, reader);
-        printf("get_root_inode:\n tmp_node->st_ino: %hd,  tmp_node->addr: %hd\n", tmp_node->st_ino, tmp_node->addr[0]);
+        PRINTF_FLUSH("get_root_inode:\n tmp_node->st_ino: %hd,  tmp_node->addr: %hd\n", tmp_node->st_ino, tmp_node->addr[0]);
         fclose(reader);
-        printf("get_root_inode end\n");
+        PRINTF_FLUSH("get_root_inode end\n");
         return 0;
     }
     
@@ -79,10 +164,10 @@ int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk
     FILE* reader = NULL;
     reader = fopen(disk_path, "rb");
     int count = 0;
-    printf("getFileFullNameByDataBlock: %d\n", count);
+    PRINTF_FLUSH("getFileFullNameByDataBlock: %d\n", count);
     if (NULL == reader)
     {
-        printf("READER:NULL\n");
+        PRINTF_FLUSH("READER:NULL\n");
         return -1;
     }
     int pos = 0;
@@ -98,8 +183,8 @@ int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk
             strcat(full_name, tmp_dir_entry->extension);    
         }
         strcpy(file_fullnames, full_name);
-        printf("数据块中第%d个目录名：%s\n", i + 1, tmp_dir_entry->file_name);
-        printf("保存到file_fullnames中的第%d个目录名：%s\n", i + 1, file_fullnames);
+        PRINTF_FLUSH("数据块中第%d个目录名：%s\n", i + 1, tmp_dir_entry->file_name);
+        PRINTF_FLUSH("保存到file_fullnames中的第%d个目录名：%s\n", i + 1, file_fullnames);
         i++;
         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
         tmp_dir_entry++;
@@ -110,10 +195,10 @@ int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk
 }
 static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
-    printf("pzj_getattr begin\n");
-    printf("getattr	 path : %s \n", path);
+    PRINTF_FLUSH("pzj_getattr begin\n");
+    PRINTF_FLUSH("getattr	 path : %s \n", path);
     if (strcmp("/", path) == 0) {
-        printf("yes!!!\n");
+        PRINTF_FLUSH("yes!!!\n");
         stbuf->st_ino = root_inode.st_ino;
         stbuf->st_mode = root_inode.st_mode | S_IFDIR;
         stbuf->st_nlink = root_inode.st_nlink;
@@ -133,18 +218,18 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         // 有二级目录，形如：/fada/....
         if (NULL != second_path)
         {
-            printf("不允许二级路径！\n");
+            PRINTF_FLUSH("不允许二级路径！\n");
             return -1;
         }
         const char* dir_file_name = path_cp;
-        printf("请求的文件或目录名：%s\n", dir_file_name);
+        PRINTF_FLUSH("请求的文件或目录名：%s\n", dir_file_name);
         int addr_num = sizeof(root_inode.addr) / sizeof(root_inode.addr[0]);
-        printf("addr_num: %d\n", addr_num);
+        PRINTF_FLUSH("addr_num: %d\n", addr_num);
         int tmp_addr;
         for (int i = 0; i < addr_num; ++i)
         {
             tmp_addr = root_inode.addr[i];
-            printf("tmp_addr: %hd\n", tmp_addr);
+            PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
 
             // 结束，没找到对应的目录
             if (-1 == tmp_addr)
@@ -162,7 +247,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                     // 2.读到数据为空
 
                     // TODO：-----------------以下内容可以复用
-                    printf("读取直接地址的数据\n");
+                    PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* data_blk = malloc(sizeof(struct data_block));
                     // 读取数据块数据
@@ -171,11 +256,11 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                     {
                         return -1;
                     }
-                    printf("成功读取数据块内容\n");
+                    PRINTF_FLUSH("成功读取数据块内容\n");
                     // 得到数据块中存储的dir_entry的个数
                     size_t dir_num = data_blk->used_size / sizeof(struct dir_entry);
-                    printf("used_size：%zu\n", data_blk->used_size);
-                    printf("数据块存储的目录项个数为%zu\n", dir_num);
+                    PRINTF_FLUSH("used_size：%zu\n", data_blk->used_size);
+                    PRINTF_FLUSH("数据块存储的目录项个数为%zu\n", dir_num);
                     int count = 0;
                     int pos = 0;
                     struct dir_entry* tmp_dir_entry = (struct dir_entry*) data_blk->data;
@@ -205,7 +290,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                             stbuf->st_size = tmp_inode.st_size;
                             stbuf->st_atime = tmp_inode.st_atim.tv_sec;
                             stbuf->st_blocks = m_sb.first_inode + tmp_inode.st_ino - 1;
-                            printf("成功找到%s\n", dir_file_name);
+                            PRINTF_FLUSH("成功找到%s\n", dir_file_name);
                             fclose(reader);
                             free(data_blk);
                             return 0;
@@ -230,7 +315,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                         free(data_blk);
                         return -1;
                     }
-                    printf("成功读取一级索引块内容\n");
+                    PRINTF_FLUSH("成功读取一级索引块内容\n");
                     // 计算存储的数据块的地址个数
                     int addr_num = data_blk->used_size / sizeof(short int);
                     int pos = 0;
@@ -238,7 +323,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                     while (pos < data_blk->used_size)
                     {
                         short int tmp_data_addr = *data_addr;
-                        printf("读取直接地址的数据\n");
+                        PRINTF_FLUSH("读取直接地址的数据\n");
                         // 申请数据块内存
                         struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
                         // 读取数据块数据
@@ -249,10 +334,10 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                             free(tmp_data_blk);
                             return -1;
                         }
-                        printf("成功读取数据块内容\n");
+                        PRINTF_FLUSH("成功读取数据块内容\n");
                         // 得到数据块中存储的dir_entry的个数
                         int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
-                        printf("数据块存储的目录项个数为%d\n", dir_num);
+                        PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
                         // 申请文件全名内存
                         char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
                         // 得到当前数据块所有文件全名
@@ -264,14 +349,14 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                             free(file_fullnames);
                             return -1;
                         }
-                        printf("数据块存储的文件名个数为%d\n", file_fullname_num);
+                        PRINTF_FLUSH("数据块存储的文件名个数为%d\n", file_fullname_num);
                         for (int i = 0; i < file_fullname_num; ++i)
                         {
                             if (file_fullnames != NULL)
                             {
                                 if ( 0 == strcmp(file_fullnames, dir_file_name))
                                 {
-                                    printf("目录已存在，无法创建重名的目录！\n");
+                                    PRINTF_FLUSH("目录已存在，无法创建重名的目录！\n");
                                     free(data_blk);
                                     free(tmp_data_blk);
                                     free(file_fullnames);
@@ -281,7 +366,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                             else
                             {
                                 // 处理无效的文件全名
-                                printf("%d 无效\n", i);
+                                PRINTF_FLUSH("%d 无效\n", i);
                             }
                             file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                         }
@@ -305,7 +390,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
 }
 int isEmptyDirEntry(struct dir_entry* tmp_dir_entry)
 {
-    printf("%s, %d, %s, %s\n", tmp_dir_entry->file_name, tmp_dir_entry->inode_id, tmp_dir_entry->extension, tmp_dir_entry->reserved);
+    PRINTF_FLUSH("%s, %d, %s, %s\n", tmp_dir_entry->file_name, tmp_dir_entry->inode_id, tmp_dir_entry->extension, tmp_dir_entry->reserved);
     if (strcmp(tmp_dir_entry->file_name, "") == 0 && 
         tmp_dir_entry->inode_id == 0 &&
         strcmp(tmp_dir_entry->extension, "") == 0 &&
@@ -331,24 +416,24 @@ int isEmptyDirEntry(struct dir_entry* tmp_dir_entry)
 
 static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t offset, struct fuse_file_info *fi)
 {
-    printf("pzj_readdir begin\n");
-    printf( "tfs_readdir	 path : %s \n", path);
+    PRINTF_FLUSH("pzj_readdir begin\n");
+    PRINTF_FLUSH( "tfs_readdir	 path : %s \n", path);
     // 所有目录都有的内容
     filler(buf, ".", NULL, 0, 0);
     int first_ret = filler(buf, "..", NULL, 0, 0);
-    printf("hello!\n");
+    PRINTF_FLUSH("hello!\n");
     // 这是根目录
     if(strcmp(path, "/") == 0)
     {   
-        printf("这是根目录\n");
+        PRINTF_FLUSH("这是根目录\n");
         // 由于是根目录，因此可以直接得到inode
         int addr_num = sizeof(root_inode.addr) / sizeof(root_inode.addr[0]);
-        printf("addr_num: %d\n", addr_num);
+        PRINTF_FLUSH("addr_num: %d\n", addr_num);
         int tmp_addr;
         for (int i = 0; i < addr_num; ++i)
         {
             tmp_addr = root_inode.addr[i];
-            printf("tmp_addr: %hd\n", tmp_addr);
+            PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
 
             // 结束，没找到对应的目录
             if (-1 == tmp_addr)
@@ -369,7 +454,7 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                     // 2.读到数据为空
 
                     // TODO：-----------------以下内容可以复用
-                    printf("读取直接地址的数据\n");
+                    PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* data_blk = malloc(sizeof(struct data_block));
                     // 读取数据块数据
@@ -378,10 +463,10 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                     {
                         return -1;
                     }
-                    printf("成功读取数据块内容\n");
+                    PRINTF_FLUSH("成功读取数据块内容\n");
                     // 得到数据块中存储的dir_entry的个数
                     int dir_num = data_blk->used_size / sizeof(struct dir_entry);
-                    printf("数据块存储的目录项个数为%d\n", dir_num);
+                    PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
                     // 申请文件全名内存
                     char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
                     // 得到当前数据块所有文件全名
@@ -390,26 +475,26 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                     {
                         return -1;
                     }
-                    printf("数据块存储的文件名个数为%d\n", dir_num);
-                    printf("以下是数据块中的文件名：\n");
+                    PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
+                    PRINTF_FLUSH("以下是数据块中的文件名：\n");
                     for (int i = 0; i < file_fullname_num; ++i)
                     {
                         char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
                         if (file_fullnames != NULL)
                         {
                             strcpy(fullname, file_fullnames);
-                            printf("%s\n", fullname);
+                            PRINTF_FLUSH("%s\n", fullname);
                             filler(buf, fullname, NULL, 0, 0);
                         }
                         else
                         {
                             // 处理无效的文件全名
-                            printf("%d 无效\n", i);
+                            PRINTF_FLUSH("%d 无效\n", i);
                         }
                         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                     }
                     // -----------------以上内容可以复用
-                    printf("装填filler完毕\n");
+                    PRINTF_FLUSH("装填filler完毕\n");
                     
                 }
                 // 一次间接寻址，先找到所有存储到数据（目录项）的数据块，再读取这些数据块中的目录项
@@ -427,7 +512,7 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                         free(data_blk);
                         return -1;
                     }
-                    printf("成功读取一级索引块内容\n");
+                    PRINTF_FLUSH("成功读取一级索引块内容\n");
                     // 计算存储的数据块的地址个数
                     int addr_num = data_blk->used_size / sizeof(short int);
                     int pos = 0;
@@ -435,7 +520,7 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                     while (pos < data_blk->used_size)
                     {
                         short int tmp_data_addr = *data_addr;
-                        printf("读取直接地址的数据\n");
+                        PRINTF_FLUSH("读取直接地址的数据\n");
                         // 申请数据块内存
                         struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
                         // 读取数据块数据
@@ -447,10 +532,10 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                             free(data_blk);
                             return -1;
                         }
-                        printf("成功读取数据块内容\n");
+                        PRINTF_FLUSH("成功读取数据块内容\n");
                         // 得到数据块中存储的dir_entry的个数
                         int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
-                        printf("数据块存储的目录项个数为%d\n", dir_num);
+                        PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
                         // 申请文件全名内存
                         char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
                         // 得到当前数据块所有文件全名
@@ -462,20 +547,20 @@ static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t
                             free(data_blk);
                             return -1;
                         }
-                        printf("数据块存储的文件名个数为%d\n", dir_num);
+                        PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
                         for (int i = 0; i < file_fullname_num; ++i)
                         {
                             char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
                             if (file_fullnames != NULL)
                             {
                                 strcpy(fullname, file_fullnames);
-                                printf("%s\n", fullname);
+                                PRINTF_FLUSH("%s\n", fullname);
                                 filler(buf, fullname, NULL, 0, 0);
                             }
                             else
                             {
                                 // 处理无效的文件全名
-                                printf("%d 无效\n", i);
+                                PRINTF_FLUSH("%d 无效\n", i);
                             }
                             file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                         }
@@ -514,7 +599,7 @@ static int block_isfull(short int addr)
     {
         if (BLOCK_MAX_DATA_SIZE <= data_blk->used_size)
         {
-            printf("数据块%hd已满！\n", addr);
+            PRINTF_FLUSH("数据块%hd已满！\n", addr);
             free(data_blk);
             return 1;
         }
@@ -525,7 +610,7 @@ static int block_isfull(short int addr)
         }
     }
     else{
-        printf("读取数据块出错！\n");
+        PRINTF_FLUSH("读取数据块出错！\n");
         free(data_blk);
         return -1;
     }
@@ -564,11 +649,11 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
 {
     if (type == 1)
     {
-        printf("创建目录, path:%s\n", path);
+        PRINTF_FLUSH("创建目录, path:%s\n", path);
     }
     else
     {
-        printf("创建文件, path:%s\n", path);
+        PRINTF_FLUSH("创建文件, path:%s\n", path);
     }
     // 路径解析
     const char* path_cp = path;
@@ -578,17 +663,17 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     // 有二级目录，形如：/fada/....
     if (NULL != second_path)
     {
-        printf("目录或文件创建失败，不能创建非根目录下的目录或文件！\n");
+        PRINTF_FLUSH("目录或文件创建失败，不能创建非根目录下的目录或文件！\n");
         return -EPERM;
     }
     const char* new_dir_or_file_name = path_cp;
     if (type == 1)
     {
-        printf("新的目录名：%s\n", new_dir_or_file_name);
+        PRINTF_FLUSH("新的目录名：%s\n", new_dir_or_file_name);
     }
     else
     {
-        printf("新的文件名：%s\n", new_dir_or_file_name);
+        PRINTF_FLUSH("新的文件名：%s\n", new_dir_or_file_name);
     }
     
     // 一级目录，形如/....
@@ -599,7 +684,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     // 检查目录名长度
     if (dir_or_file_name_len > MAX_DIR_FILE_NAME_LEN)
     {
-        printf("目录或文件创建失败，目录或文件名超出规定的8个字符的长度！\n");
+        PRINTF_FLUSH("目录或文件创建失败，目录或文件名超出规定的8个字符的长度！\n");
         return -ENAMETOOLONG;
     }
     // 检查后缀名长度
@@ -608,7 +693,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     {
         if (strlen(exten) > 3)
         {
-            printf("文件的后缀名大于3个字节，创建失败！\n");
+            PRINTF_FLUSH("文件的后缀名大于3个字节，创建失败！\n");
             return -ENAMETOOLONG;
         }
     }
@@ -616,12 +701,12 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     // 检查是否有重名目录
     // 1.读取根目录下的所有目录名
     int addr_num = sizeof(root_inode.addr) / sizeof(root_inode.addr[0]);
-    printf("addr_num: %d\n", addr_num);
+    PRINTF_FLUSH("addr_num: %d\n", addr_num);
     int tmp_addr;
     for (int i = 0; i < addr_num; ++i)
     {
         tmp_addr = root_inode.addr[i];
-        printf("tmp_addr: %hd\n", tmp_addr);
+        PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
 
         // 结束，没找到对应的目录
         if (-1 == tmp_addr)
@@ -638,7 +723,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                 // 2.读到数据为空
 
                 // TODO：-----------------以下内容可以复用
-                printf("读取直接地址的数据\n");
+                PRINTF_FLUSH("读取直接地址的数据\n");
                 // 申请数据块内存
                 struct data_block* data_blk = malloc(sizeof(struct data_block));
                 // 读取数据块数据
@@ -648,10 +733,10 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                     free(data_blk);
                     return -1;
                 }
-                printf("成功读取数据块内容\n");
+                PRINTF_FLUSH("成功读取数据块内容\n");
                 // 得到数据块中存储的dir_entry的个数
                 int dir_num = data_blk->used_size / sizeof(struct dir_entry);
-                printf("数据块存储的目录项个数为%d\n", dir_num);
+                PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
                 // 申请文件全名内存
                 char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
                 memset(file_fullnames, '\0', sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
@@ -663,17 +748,17 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                     free(data_blk);
                     return -1;
                 }
-                printf("%s\n", file_fullnames);
-                printf("数据块存储的文件名个数为%d\n", file_fullname_num);
+                PRINTF_FLUSH("%s\n", file_fullnames);
+                PRINTF_FLUSH("数据块存储的文件名个数为%d\n", file_fullname_num);
                 for (int i = 0; i < file_fullname_num; ++i)
                 {
-                    printf("%s\n", file_fullnames);
+                    PRINTF_FLUSH("%s\n", file_fullnames);
                     if (file_fullnames != NULL)
                     {
-                        printf("%s", file_fullnames);
+                        PRINTF_FLUSH("%s", file_fullnames);
                         if ( 0 == strcmp(file_fullnames, new_dir_or_file_name))
                         {
-                            printf("目录已存在，无法创建重名的目录！\n");
+                            PRINTF_FLUSH("目录已存在，无法创建重名的目录！\n");
                             // free(file_fullnames);
                             free(data_blk);
                             return -EEXIST;
@@ -682,7 +767,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                     else
                     {
                         // 处理无效的文件全名
-                        printf("%d 无效\n", i);
+                        PRINTF_FLUSH("%d 无效\n", i);
                     }
                     file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                 }
@@ -705,7 +790,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                 {
                     return -1;
                 }
-                printf("成功读取一级索引块内容\n");
+                PRINTF_FLUSH("成功读取一级索引块内容\n");
                 // 计算存储的数据块的地址个数
                 int addr_num = data_blk->used_size / sizeof(short int);
                 int pos = 0;
@@ -713,7 +798,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                 while (pos < data_blk->used_size)
                 {
                     short int tmp_data_addr = *data_addr;
-                    printf("读取直接地址的数据\n");
+                    PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
                     // 读取数据块数据
@@ -722,10 +807,10 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                     {
                         return -1;
                     }
-                    printf("成功读取数据块内容\n");
+                    PRINTF_FLUSH("成功读取数据块内容\n");
                     // 得到数据块中存储的dir_entry的个数
                     int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
-                    printf("数据块存储的目录项个数为%d\n", dir_num);
+                    PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
                     // 申请文件全名内存
                     char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
                     // 得到当前数据块所有文件全名
@@ -734,21 +819,21 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
                     {
                         return -1;
                     }
-                    printf("数据块存储的文件名个数为%d\n", file_fullname_num);
+                    PRINTF_FLUSH("数据块存储的文件名个数为%d\n", file_fullname_num);
                     for (int i = 0; i < file_fullname_num; ++i)
                     {
                         if (file_fullnames != NULL)
                         {
                             if ( 0 == strcmp(file_fullnames, new_dir_or_file_name))
                             {
-                                printf("目录已存在，无法创建重名的目录！\n");
+                                PRINTF_FLUSH("目录已存在，无法创建重名的目录！\n");
                                 return -EEXIST;
                             }
                         }
                         else
                         {
                             // 处理无效的文件全名
-                            printf("%d 无效\n", i);
+                            PRINTF_FLUSH("%d 无效\n", i);
                         }
                         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                     }
@@ -770,14 +855,17 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     // 3.将inode放入inode数据区
     // 4.更新inode位图区
     // 5.创建dir_entry对象
-    // 6.将dir_entry放入数据区，更新根目录的大小以及addr地址并将根目录信息重新写入文件系统
+    // 6.将dir_entry放入数据区，更新根目录的大小以及addr地址并更新数据位图区以及将根目录信息重新写入文件系统
     // 7.更新数据位图区
 
     // 创建inode
     struct inode new_inode;
     new_inode.st_mode = mode;
-    new_inode.st_ino = ++cur_inode_id;
-    printf("新建目录的inode值为：%hd\n", new_inode.st_ino);
+    short int* inode_ids = (short int*)malloc(sizeof(short int));
+    get_free_data_blk(inode_ids, 1, 2);
+    new_inode.st_ino = *inode_ids;
+    // free(inode_ids);
+    PRINTF_FLUSH("新建目录的inode值为：%hd\n", new_inode.st_ino);
     new_inode.st_nlink = 1;
     new_inode.st_uid = 0;
     new_inode.st_gid = 0;
@@ -798,34 +886,34 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
 
     // 更新inode位图区
     int over_bytes_num = (new_inode.st_ino - 1) / 8;
-    printf("over_bytes_num：%d\n", over_bytes_num);
+    PRINTF_FLUSH("over_bytes_num：%d\n", over_bytes_num);
     int over_bit = (new_inode.st_ino - 1) % 8;
-    printf("over_bit：%d\n", over_bit);
+    PRINTF_FLUSH("over_bit：%d\n", over_bit);
     off = m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE + over_bytes_num;
-    printf("off：%ld\n", off);
+    PRINTF_FLUSH("off：%ld\n", off);
 
     // 将文件指针移动到inode位图第一个字节
     fseek(reader, off, SEEK_SET);
-    printf("文件指针目前的位置：%ld\n", ftell(reader));
+    PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(reader));
     unsigned char tmp_byte;
 
     fread(&tmp_byte, 1, 1, reader);
-    printf("inode_first_byte的值：%d\n", tmp_byte);
+    PRINTF_FLUSH("inode_first_byte的值：%d\n", tmp_byte);
 
     // tmp_byte += 0x01;
     tmp_byte |= (1 << over_bit);
-    printf("更新后的inode_first_byte的值：%d\n", tmp_byte);
+    PRINTF_FLUSH("更新后的inode_first_byte的值：%d\n", tmp_byte);
     // 将文件指针复位
     fseek(reader, off, SEEK_SET);
-    printf("文件指针目前的位置：%ld\n", ftell(reader));
+    PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(reader));
     // 重新写回文件
     if (1 != fwrite(&tmp_byte, 1, 1, reader)) {
 
-        printf("inode位图区更新失败 %d\n", errno);
+        PRINTF_FLUSH("inode位图区更新失败 %d\n", errno);
         return -1;
     }
-    printf("写入后文件指针目前的位置：%ld\n", ftell(reader));
-    printf("inode位图区更新成功！\n");
+    PRINTF_FLUSH("写入后文件指针目前的位置：%ld\n", ftell(reader));
+    PRINTF_FLUSH("inode位图区更新成功！\n");
     fclose(reader);
     // 将dir_entry放入数据区，更新根目录的大小以及addr地址并将根目录信息重新写入文件系统
 
@@ -838,7 +926,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     int count = -1;
     for (int i = 0; i< 7; ++i)
     {
-        // printf("i: %d\n", i);
+        // PRINTF_FLUSH("i: %d\n", i);
         if (root_inode.addr[i] == -1)
         {
             break;
@@ -851,13 +939,13 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     tmp_addr = -1;
     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
     // 一定要初始化data部分
-    printf("1\n");
-    printf("count为：%d\n", count);
+    PRINTF_FLUSH("1\n");
+    PRINTF_FLUSH("count为：%d\n", count);
     memset(tmp_data_blk->data, '\0', BLOCK_MAX_DATA_SIZE);
     // 从来没有数据，只需新建数据块即可
     if (count == -1)
     {
-         printf("2\n");
+         PRINTF_FLUSH("2\n");
         // 更新根目录大小信息
         root_inode.st_size += sizeof(struct dir_entry);
         root_inode.addr[0] = m_sb.first_blk;
@@ -868,16 +956,16 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         if (type == 1)
         {
             strcpy(new_dir_entry->file_name, new_dir_or_file_name);
-            printf("新目录名为：%s\n", new_dir_or_file_name);
-            printf("写入的新目录名为：%s\n", new_dir_entry->file_name);
+            PRINTF_FLUSH("新目录名为：%s\n", new_dir_or_file_name);
+            PRINTF_FLUSH("写入的新目录名为：%s\n", new_dir_entry->file_name);
         }
         // 文件
         else
         {
             SplitFileNameAndExtension(new_dir_or_file_name, new_dir_entry->file_name, new_dir_entry->extension);
-            printf("新文件全名为：%s\n", new_dir_or_file_name);
-            printf("写入的新文件名为：%s\n", new_dir_entry->file_name);
-            printf("extension内容以及长度：%s, %zu\n", new_dir_entry->extension, strlen(new_dir_entry->extension));
+            PRINTF_FLUSH("新文件全名为：%s\n", new_dir_or_file_name);
+            PRINTF_FLUSH("写入的新文件名为：%s\n", new_dir_entry->file_name);
+            PRINTF_FLUSH("extension内容以及长度：%s, %zu\n", new_dir_entry->extension, strlen(new_dir_entry->extension));
         }
         new_dir_entry->inode_id = new_inode.st_ino;
         tmp_data_blk->used_size = sizeof(struct dir_entry);
@@ -885,16 +973,19 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         // 将数据块信息写入文件
         FILE* reader = NULL;
         reader = fopen(disk_path, "r+");
-        long off = m_sb.first_blk * BLOCK_SIZE;
+       
+        short int* data_blk_ids = (short int*)malloc(sizeof(short int));
+        get_free_data_blk(data_blk_ids, 1, 1);
+        long off = *data_blk_ids * BLOCK_SIZE;
         fseek(reader, off, SEEK_SET);
         fwrite(tmp_data_blk, sizeof(struct data_block), 1, reader);
-        printf("目录项写入数据区成功！\n");
+        PRINTF_FLUSH("目录项写入数据区成功！\n");
 
         // 将根目录信息重新写入文件系统
         off = m_sb.first_inode * BLOCK_SIZE;
         fseek(reader, off, SEEK_SET);
         fwrite(&root_inode, sizeof(struct inode), 1, reader);
-        printf("根目录inode成功更新到文件系统！\n");
+        PRINTF_FLUSH("根目录inode成功更新到文件系统！\n");
         fclose(reader);
         free(tmp_data_blk);
         return 0;
@@ -910,20 +1001,22 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         fread(tmp_data_blk, sizeof(struct data_block), 1, reader);
         fclose(reader);
     }
-    printf("跳出来了\n");
+    PRINTF_FLUSH("跳出来了\n");
     // 检查原来的数据块是否已经满了
     // 当前数据块已存的目录数
     int cur_dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
     // 原来的数据块已经满了
     if (cur_dir_num >= DIR_ENTRY_MAXNUM_PER_BLOCK)
     {
-        printf("当前有效块已满，需要新建块\n");
+        PRINTF_FLUSH("当前有效块已满，需要新建块\n");
         // 下一个是直接地址
         if (count <= 2)
         {
             // 更新根目录的addr数组信息和大小信息
-            ++cur_data_blk_id;
-            root_inode.addr[count + 1] = cur_data_blk_id;
+            short int* data_blk_ids = (short int*)malloc(sizeof(short int));
+            get_free_data_blk(data_blk_ids, 1, 1);
+            root_inode.addr[count + 1] = *data_blk_ids;
+            // free(data_blk_ids);
             root_inode.st_size += sizeof(struct dir_entry);
             
             
@@ -941,13 +1034,13 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
             long off = root_inode.addr[count + 1] * BLOCK_SIZE;
             fseek(reader, off, SEEK_SET);
             fwrite(new_data_blk, sizeof(struct data_block), 1, reader);
-            printf("目录项写入数据区成功！\n");
+            PRINTF_FLUSH("目录项写入数据区成功！\n");
 
             // 将根目录信息重新写入文件系统
             off = m_sb.first_inode * BLOCK_SIZE;
             fseek(reader, off, SEEK_SET);
             fwrite(&root_inode, sizeof(struct inode), 1, reader);
-            printf("目录inode成功更新到文件系统！\n");
+            PRINTF_FLUSH("目录inode成功更新到文件系统！\n");
             fclose(reader);
             free(new_data_blk);
             return 0;
@@ -981,11 +1074,11 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         
         // 更新当前数据块已使用大小和数据信息
         struct dir_entry* new_dir_entry = (struct dir_entry*) tmp_data_blk->data;
-        printf("cur_dir_num: %d\n", cur_dir_num);
-        printf("sizeof(struct dir_entry): %zu\n", sizeof(struct dir_entry));
-        printf("new_dir_name: %s\n", new_dir_or_file_name);
-        printf("第1个目录名：%s\n", new_dir_entry->file_name);
-        printf("原来的new_dir_entry地址：%p\n", new_dir_entry);
+        PRINTF_FLUSH("cur_dir_num: %d\n", cur_dir_num);
+        PRINTF_FLUSH("sizeof(struct dir_entry): %zu\n", sizeof(struct dir_entry));
+        PRINTF_FLUSH("new_dir_name: %s\n", new_dir_or_file_name);
+        PRINTF_FLUSH("第1个目录名：%s\n", new_dir_entry->file_name);
+        PRINTF_FLUSH("原来的new_dir_entry地址：%p\n", new_dir_entry);
         // 移到要追加的位置
 
         while (cur_dir_num > 0)
@@ -993,25 +1086,25 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
             new_dir_entry++;
             --cur_dir_num;
         }
-        printf("偏移后的new_dir_entry地址：%p\n", new_dir_entry);
+        PRINTF_FLUSH("偏移后的new_dir_entry地址：%p\n", new_dir_entry);
         // 追加新的目录内容
 
         if (type == 1)
         {
             strcpy(new_dir_entry->file_name, new_dir_or_file_name);
-            printf("新目录名为：%s\n", new_dir_or_file_name);
-            printf("写入的新目录名为：%s\n", new_dir_entry->file_name);
+            PRINTF_FLUSH("新目录名为：%s\n", new_dir_or_file_name);
+            PRINTF_FLUSH("写入的新目录名为：%s\n", new_dir_entry->file_name);
         }
         // 文件
         else
         {
             SplitFileNameAndExtension(new_dir_or_file_name, new_dir_entry->file_name, new_dir_entry->extension);
-            printf("新文件全名为：%s\n", new_dir_or_file_name);
-            printf("写入的新文件名为：%s\n", new_dir_entry->file_name);
-            printf("extension内容以及长度：%s, %zu\n", new_dir_entry->extension, strlen(new_dir_entry->extension));
+            PRINTF_FLUSH("新文件全名为：%s\n", new_dir_or_file_name);
+            PRINTF_FLUSH("写入的新文件名为：%s\n", new_dir_entry->file_name);
+            PRINTF_FLUSH("extension内容以及长度：%s, %zu\n", new_dir_entry->extension, strlen(new_dir_entry->extension));
         }
         new_dir_entry->inode_id = new_inode.st_ino;
-        printf("inode号：%hd\n", new_dir_entry->inode_id);
+        PRINTF_FLUSH("inode号：%hd\n", new_dir_entry->inode_id);
         // 更新数据块已使用大小
         tmp_data_blk->used_size += sizeof(struct dir_entry);
 
@@ -1021,13 +1114,13 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         long off = root_inode.addr[count] * BLOCK_SIZE;
         fseek(reader, off, SEEK_SET);
         fwrite(tmp_data_blk, sizeof(struct data_block), 1, reader);
-        printf("目录项写入数据区成功！\n");
+        PRINTF_FLUSH("目录项写入数据区成功！\n");
 
         // 将根目录信息重新写入文件系统
         off = m_sb.first_inode * BLOCK_SIZE;
         fseek(reader, off, SEEK_SET);
         fwrite(&root_inode, sizeof(struct inode), 1, reader);
-        printf("根目录inode成功更新到文件系统！\n");
+        PRINTF_FLUSH("根目录inode成功更新到文件系统！\n");
         fclose(reader);
         return 0;
     }
@@ -1060,10 +1153,10 @@ int main(int argc, char *argv[]) {
 
     FILE* reader = fopen(disk_path, "rb");
     if (reader == NULL) {
-        printf("main中diskimg打开失败\n");
+        PRINTF_FLUSH("main中diskimg打开失败\n");
         return -1;
     }
-    printf("成功打开\n");
+    PRINTF_FLUSH("成功打开\n");
     fclose(reader);
     // 读取超级块
     get_sb_info();

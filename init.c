@@ -10,7 +10,7 @@
 int main() {
     struct super_block m_sb;
     m_sb.fs_size = FILE_SYSTEM_SIZE / BLOCK_SIZE;
-    m_sb.inodebitmap_size = INODE_AREA_BLOCK_NUM;
+    m_sb.inodebitmap_size = INODE_BITMAP_BLOCK_NUM;
     m_sb.databitmap_size = DATA_BITMAP_BLOCK_NUM;
     m_sb.inode_area_size = INODE_AREA_BLOCK_NUM;
     m_sb.datasize = m_sb.fs_size - INODE_BITMAP_BLOCK_NUM - DATA_BITMAP_BLOCK_NUM - INODE_AREA_BLOCK_NUM;
