@@ -11,7 +11,9 @@
 } while (0)
 // 全局变量
 struct super_block m_sb;
-const char* disk_path = "/root/data/PFS/diskimg";
+const char* disk_path = "/root/data/MFS/diskimg";
+// 根目录
+struct inode root_inode;
 
 // 记录当前已经被使用的最大的inode的id
 short int cur_inode_id = 1;
@@ -20,6 +22,162 @@ short int cur_data_blk_id = -1;
 
 struct inode_table_entry inode_table[INODE_AREA_BLOCK_NUM];
 
+// 根据inodo号或者块号(addr)重置inode位图区或者数据块位图区
+// mode=1表示重置数据块位图区，id即为addr
+// mode=2表示重置inode位图区，id即为inode号
+void recall_inode_or_datablk_id(const short int id, int mode)
+{
+    if (mode == 1)
+    {
+        PRINTF_FLUSH("开始重置数据块位图区！\n");
+    }
+    else
+    {
+        PRINTF_FLUSH("重置inode位图区！\n");
+    }
+    
+    FILE* reader = NULL;
+    reader = fopen(disk_path, "r+");
+    short int over_bytes;
+    short int over_bits;
+    long off;
+    // 数据块
+    if (mode == 1)
+    {
+        short int block_bit_map_id = id - m_sb.first_blk;
+        over_bytes = block_bit_map_id / 8;
+        over_bits = block_bit_map_id % 8;
+        off = m_sb.first_blk_of_databitmap * BLOCK_SIZE + over_bytes;
+    }
+    // inode
+    else
+    {
+        over_bytes = (id - 1) / 8;
+        over_bits = (id - 1) % 8;
+        off = m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE + over_bytes;
+    }
+    // 移动文件指针
+    PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(reader));
+    fseek(reader, off, SEEK_SET);
+    PRINTF_FLUSH("移动后文件指针目前的位置：%ld\n", ftell(reader));
+ 
+    unsigned char cur_byte;
+    // 将指定位置置为0
+    fread(&cur_byte, sizeof(char), 1, reader);
+    PRINTF_FLUSH("原来cur_byte的值：%d\n", cur_byte);
+    cur_byte &= ~(1 << over_bits);
+    PRINTF_FLUSH("更新后cur_byte的值：%d\n", cur_byte);
+    // 文件指针复位
+    fseek(reader, off, SEEK_SET);
+    PRINTF_FLUSH("复位后文件指针目前的位置：%ld\n", ftell(reader));
+    // 将数据重新写入
+    fwrite(&cur_byte, sizeof(char), 1, reader);
+    PRINTF_FLUSH("写入后文件指针目前的位置：%ld\n", ftell(reader));
+    fclose(reader);
+    PRINTF_FLUSH("重置成功！\n");
+
+}
+
+// 根据inode回收数据块
+void recall_data_block(const struct inode cur_inode)
+{
+    PRINTF_FLUSH("开始回收数据块!\n");
+    int addr_num = sizeof(cur_inode.addr) / sizeof(short int);
+    PRINTF_FLUSH("addr_num: %d\n", addr_num);
+    // 后面只需提供数据块的地址即可回收
+    for (int i = 0; i < addr_num; ++i)
+    {
+        if (-1 == cur_inode.addr[i])
+        {
+            break;
+        }
+        // 直接地址
+        if (i <= 3)
+        {
+            recall_inode_or_datablk_id(cur_inode.addr[i], 1);
+            PRINTF_FLUSH("成功回收数据块!\n");
+        }
+        // 一级索引
+        else if (4 == i)
+        {
+
+        }
+        // 二级索引
+        else if (5 == i)
+        {
+
+        }
+        // 三级索引
+        else
+        {
+
+        }
+    }
+    PRINTF_FLUSH("没有占用数据块,不需要回收!\n");
+   
+}
+
+
+void write_back_root_inode()
+{
+    FILE* reader = NULL;
+    reader = fopen(disk_path, "r+");
+    long off = m_sb.first_inode * BLOCK_SIZE;
+    fseek(reader, off, SEEK_SET);
+    fwrite(&root_inode, sizeof(struct inode), 1, reader);
+    fclose(reader);
+    PRINTF_FLUSH("根目录inode成功更新到文件系统！\n");
+}
+
+// 删除目录时更新根目录信息
+// TODO:暂时只考虑只用到直接地址的情况
+// 更新父目录(根目录)信息
+// 1.父目录大小
+// 2.父目录addr地址数组
+// 3.如果当前目录独占一个父目录的数据块,则需要对这个数据块进行回收操作
+void update_root_info(const struct inode cur_rm_inode, struct data_block* data_blk, const int tmp_addr_i, struct dir_entry* rm_dir_entry)
+{
+    PRINTF_FLUSH("开始更新删除目录的父目录(根目录)的信息...\n");
+    
+    FILE* reader = NULL;
+    reader = fopen(disk_path, "r+");
+    // 更新根目录数据块记录的目录项信息(只需要更新数据块已使用大小)
+    // TODO:是否要物理清空对应位置数据
+    short int tmp_addr = root_inode.addr[tmp_addr_i];
+    // 紧凑数据块,前面空了就将数据块最后一个目录项拿到前面空位补
+    int total_dir_num = data_blk->used_size / sizeof(struct dir_entry);
+    // 指向数据块中最后一个数据项的有效地址
+    struct dir_entry* p = (struct dir_entry*)data_blk->data;
+    // 记录当前指向的目录项的idx
+    int cur_p = 0;
+    while (cur_p < (total_dir_num - 1))
+    {
+        p++;
+        ++cur_p;
+    }
+    // 要删除的数据块的地址指向了最后一个数据项的有效地址
+    *rm_dir_entry = *p;
+    // 更新数据块已经使用的大小
+    data_blk->used_size -= sizeof(struct dir_entry); 
+    // 写回数据块内容
+    PRINTF_FLUSH("写回数据块的块地址为: %hd, 已使用大小为: %zu\n", tmp_addr, data_blk->used_size);
+    long off = tmp_addr * BLOCK_SIZE;
+    fseek(reader, off, SEEK_SET);
+    fwrite(data_blk, sizeof(struct data_block), 1, reader);
+    fclose(reader);
+    // 更新根目录大小
+    root_inode.st_size -= cur_rm_inode.st_size;
+    // 更新根目录数据区地址
+    if (data_blk->used_size == 0)
+    {
+        // 回收该独占数据块的块号
+        recall_inode_or_datablk_id(tmp_addr, 1);
+        root_inode.addr[tmp_addr_i] = -1;
+    }
+    // 写回根目录信息
+    write_back_root_inode();
+    PRINTF_FLUSH("成功更新根目录信息!\n");
+}
 
 // 每个索引块指向的内容都属于同一个文件
 // 同一个文件分配的数据块可以不连续，只需要把块地址都放到同一个索引块中即可（按顺序）
@@ -116,7 +274,7 @@ void get_sb_info() {
     PRINTF_FLUSH("get_sb_info end\n");
 }
 
-struct inode root_inode;
+
 // 根据addr（块号）读取块的数据，成功读取返回0，否则返回-1
 int read_data_block(short int addr,struct data_block* data_blk)
 {
@@ -128,8 +286,10 @@ int read_data_block(short int addr,struct data_block* data_blk)
         perror("Error");
         return -1;
     }
+    PRINTF_FLUSH("正在读取数据块...\n");
     fseek(reader, addr * BLOCK_SIZE, SEEK_SET);
     fread(data_blk, sizeof(struct data_block), 1, reader);
+    PRINTF_FLUSH("读取数据块的块地址为: %hd, 已使用大小为: %zu\n", addr, data_blk->used_size);
     fclose(reader);
     return 0;
 }
@@ -283,6 +443,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
                             struct inode tmp_inode;
                             fread(&tmp_inode, sizeof(struct inode), 1, reader);
                             stbuf->st_ino = tmp_inode.st_ino;
+                            PRINTF_FLUSH("新的inode号为: %hd\n", stbuf->st_ino);
                             stbuf->st_mode = tmp_inode.st_mode | S_IFDIR;
                             stbuf->st_nlink = tmp_inode.st_nlink;
                             stbuf->st_uid = tmp_inode.st_uid;
@@ -382,10 +543,6 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
             }
             
         }
-
-
-
-        
     }
 }
 int isEmptyDirEntry(struct dir_entry* tmp_dir_entry)
@@ -980,13 +1137,9 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         fseek(reader, off, SEEK_SET);
         fwrite(tmp_data_blk, sizeof(struct data_block), 1, reader);
         PRINTF_FLUSH("目录项写入数据区成功！\n");
-
-        // 将根目录信息重新写入文件系统
-        off = m_sb.first_inode * BLOCK_SIZE;
-        fseek(reader, off, SEEK_SET);
-        fwrite(&root_inode, sizeof(struct inode), 1, reader);
-        PRINTF_FLUSH("根目录inode成功更新到文件系统！\n");
         fclose(reader);
+        // 将根目录信息重新写入文件系统
+        write_back_root_inode();
         free(tmp_data_blk);
         return 0;
     }
@@ -1141,12 +1294,241 @@ static int pzj_utimens(const char *path, const struct timespec tv[2], struct fus
 
     return 0; // 成功时返回0，失败时返回-errno
 }
+
+
+// type=1表示目录，type=2表示文件
+static int remove_dir_or_file (const char *path, int type)
+{
+    if (type == 1)
+    {
+        PRINTF_FLUSH("删除目录, path:%s\n", path);
+    }
+    else
+    {
+        PRINTF_FLUSH("删除文件, path:%s\n", path);
+    }
+    if (strcmp("/", path) == 0) 
+    {
+
+        printf("无法删除根目录！\n");
+        return -1;
+    }
+    else {
+        const char* path_cp = path;
+        // 跳过根目录/
+        path_cp++;
+        char* second_path = strchr(path_cp, '/');
+        // 有二级目录，形如：/fada/....
+        const char* dir_file_name = path_cp;
+        PRINTF_FLUSH("要删除的文件或目录名：%s\n", dir_file_name);
+        int addr_num = sizeof(root_inode.addr) / sizeof(root_inode.addr[0]);
+        PRINTF_FLUSH("addr_num: %d\n", addr_num);
+        int tmp_addr;
+        for (int i = 0; i < addr_num; ++i)
+        {
+            tmp_addr = root_inode.addr[i];
+            PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
+
+            // 结束，没找到对应的目录或文件
+            if (-1 == tmp_addr)
+            {
+                
+                return -ENOENT;
+            }
+            else
+            {
+                // 直接地址，直接读取数据块中存储的目录项（包括文件）
+                if (i <= 3)
+                {
+                    // 停止条件
+                    // 1.到达块末尾
+                    // 2.读到数据为空
+
+                    // TODO：-----------------以下内容可以复用
+                    PRINTF_FLUSH("读取直接地址的数据\n");
+                    // 申请数据块内存
+                    struct data_block* data_blk = malloc(sizeof(struct data_block));
+                    // 读取数据块数据
+                    int ret = read_data_block(tmp_addr, data_blk);
+                    if (ret < 0)
+                    {
+                        return -1;
+                    }
+                    PRINTF_FLUSH("成功读取数据块内容\n");
+                    // 得到数据块中存储的dir_entry的个数
+                    size_t dir_num = data_blk->used_size / sizeof(struct dir_entry);
+                    PRINTF_FLUSH("used_size：%zu\n", data_blk->used_size);
+                    PRINTF_FLUSH("数据块存储的目录项个数为%zu\n", dir_num);
+                    int count = 0;
+                    int pos = 0;
+                    struct dir_entry* tmp_dir_entry = (struct dir_entry*) data_blk->data;
+                    // 记录要删除的目录是该数据块的目录项index
+                    while (pos < data_blk->used_size)
+                    {
+                        char full_name[MAX_FILE_FULLNAME_LENGTH + 2];
+                        strcpy(full_name, tmp_dir_entry->file_name);
+                        // TODO:先按照linux默认使用touch创建文件时，目录名和文件全名不可以相同的设定进行处理
+                        // 如果先创建目录，再使用touch创建重名文件名，则创建文件失败，只会更新mkdir的访问时间
+                        // 而先使用touch创建文件名，再创建重名目录，会显示文件已存在
+
+                        // 由于不会存在两个重名的目录和文件
+                        // 因此，只需要在删除目录时检查file_name是否一致
+                        // 在删除文件时检查file_name+extension是否一致
+                        // 即可
+
+                        // 删除的时候不抹除inode区和数据区的内容，只是简单的将inode和数据块的位图置为0
+                        // 删除目录时,检查要删除的是不是目录(根据是否有后缀名判断实际类型)
+                        if (0 != strlen(tmp_dir_entry->extension))
+                        {
+                            if (1 == type)
+                            {
+                                return -ENOTDIR;
+                            }
+                            strcat(full_name, ".");
+                            strcat(full_name, tmp_dir_entry->extension);    
+                        }
+                        if (0 == strcmp(dir_file_name, full_name))
+                        {
+                            short int target_inode_id = tmp_dir_entry->inode_id;
+                            FILE* reader = NULL;
+                            reader = fopen(disk_path, "rb");
+                            long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
+                            fseek(reader, off, SEEK_SET);
+                            struct inode tmp_inode;
+                            fread(&tmp_inode, sizeof(struct inode), 1, reader);
+                            // 判断是否是空目录
+                            if (1 == type)
+                            {
+                                if (tmp_inode.st_size > 0)
+                                {
+                                    fclose(reader);
+                                    free(data_blk);
+                                    return -ENOTEMPTY;
+                                }
+                            }
+                            fclose(reader);
+                            if (1 == type)
+                            {
+                                // 更新父目录(根目录)信息
+                                // 1.父目录大小
+                                // 2.父目录addr地址数组
+                                // 3.如果当前目录独占一个父目录的数据块,则需要对这个数据块进行回收操作
+                                update_root_info(tmp_inode, data_blk, i, tmp_dir_entry);
+                                
+                            }
+                            // 回收inode
+                            recall_inode_or_datablk_id(tmp_inode.st_ino, 2);
+                            // 回收要删除的目录自己的数据块
+                            recall_data_block(tmp_inode);
+                            free(data_blk);
+                            PRINTF_FLUSH("成功删除目录或文件!\n");
+                            return 0;
+                        }
+                        tmp_dir_entry++;
+                        pos += sizeof(struct dir_entry);
+                    }
+                }
+                // 一次间接寻址，先找到所有存储到数据（目录项）的数据块，再读取这些数据块中的目录项
+                else if (i == 4)
+                {
+                    // 索引块地址
+                    short int index_blk_addr = tmp_addr;
+                    // 读出索引块的信息
+                    // 申请索引块内存
+                    struct data_block* data_blk = malloc(sizeof(struct data_block));
+                    // 读取索引块数据
+                    int ret = read_data_block(tmp_addr, data_blk);
+                    if (ret < 0)
+                    {
+                        free(data_blk);
+                        return -1;
+                    }
+                    PRINTF_FLUSH("成功读取一级索引块内容\n");
+                    // 计算存储的数据块的地址个数
+                    int addr_num = data_blk->used_size / sizeof(short int);
+                    int pos = 0;
+                    short int* data_addr = (short int*) data_blk->data;
+                    while (pos < data_blk->used_size)
+                    {
+                        short int tmp_data_addr = *data_addr;
+                        PRINTF_FLUSH("读取直接地址的数据\n");
+                        // 申请数据块内存
+                        struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
+                        // 读取数据块数据
+                        int ret = read_data_block(tmp_data_addr, tmp_data_blk);
+                        if (ret < 0)
+                        {
+                            free(data_blk);
+                            free(tmp_data_blk);
+                            return -1;
+                        }
+                        PRINTF_FLUSH("成功读取数据块内容\n");
+                        // 得到数据块中存储的dir_entry的个数
+                        int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
+                        PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
+                        // 申请文件全名内存
+                        char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
+                        // 得到当前数据块所有文件全名
+                        int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, tmp_data_blk);
+                        if (file_fullname_num < 0)
+                        {
+                            free(data_blk);
+                            free(tmp_data_blk);
+                            free(file_fullnames);
+                            return -1;
+                        }
+                        PRINTF_FLUSH("数据块存储的文件名个数为%d\n", file_fullname_num);
+                        for (int i = 0; i < file_fullname_num; ++i)
+                        {
+                            if (file_fullnames != NULL)
+                            {
+                                if ( 0 == strcmp(file_fullnames, dir_file_name))
+                                {
+                                    PRINTF_FLUSH("目录已存在，无法创建重名的目录！\n");
+                                    free(data_blk);
+                                    free(tmp_data_blk);
+                                    free(file_fullnames);
+                                    return -EEXIST;
+                                }
+                            }
+                            else
+                            {
+                                // 处理无效的文件全名
+                                PRINTF_FLUSH("%d 无效\n", i);
+                            }
+                            file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
+                        }
+                        data_addr++;
+                        pos += sizeof(short int);
+                        free(tmp_data_blk);
+                        free(file_fullnames);
+                    }
+                    free(data_blk);
+                    
+                }
+                
+            }
+            
+        }
+    }
+    return -ENOENT;
+}
+static int pzj_rmdir (const char *path)
+{
+    return remove_dir_or_file(path, 1);
+}
+static int pzj_unlink (const char *path)
+{
+    return remove_dir_or_file(path, 2);
+}
 static struct fuse_operations pzj_oper = {
     .getattr = pzj_getattr,
     .readdir = pzj_readdir,
     .mkdir = pzj_mkdir,
     .mknod = pzj_mknod,
-    .utimens = pzj_utimens
+    .utimens = pzj_utimens,
+    .rmdir = pzj_rmdir,
+    .unlink = pzj_unlink
 };
 
 int main(int argc, char *argv[]) {
