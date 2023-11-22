@@ -177,7 +177,7 @@ int split_path(const char* origin_path, struct paths* m_paths)
         }
         // 得到目录或文件全名
         strcpy(m_paths->new_dir_file_fullname, second_path);
-        printf("目录或文件全名: %s\n", m_paths->new_dir_file_fullname);
+        printf("有二级目录，目录或文件全名: %s\n", m_paths->new_dir_file_fullname);
         // 计算长度
         size_t parent_dir_len = strlen(path_cp) - strlen(m_paths->new_dir_file_fullname) - 1;
         // 得到父目录名
@@ -198,12 +198,11 @@ int split_path(const char* origin_path, struct paths* m_paths)
         // PRINTF_FLUSH("1\n");
         // 得到文件或目录全名
         strcpy(m_paths->new_dir_file_fullname, path_cp);
-        printf("目录或文件全名: %s\n", m_paths->new_dir_file_fullname);
+        printf("没有二级目录，目录或文件全名: %s\n", m_paths->new_dir_file_fullname);
         // PRINTF_FLUSH("1\n");
         // 得到文件名和扩展名
         return SplitFileNameAndExtension(m_paths->new_dir_file_fullname, m_paths->file_name, m_paths->extension);
     }
-    PRINTF_FLUSH("路径解析结束！");
 }
 
 int path_is_legal(const char* origin_path, struct paths* m_paths, int type)
@@ -243,7 +242,7 @@ int path_is_legal(const char* origin_path, struct paths* m_paths, int type)
             return -EPERM;
         }
     }
-    
+    return 0;
 }
 
 // 根据inodo号或者块号(addr)重置inode位图区或者数据块位图区
@@ -351,7 +350,7 @@ void write_inode(struct inode* cur_inode)
     fseek(reader, off, SEEK_SET);
     fwrite(cur_inode, sizeof(struct inode), 1, reader);
     fclose(reader);
-    PRINTF_FLUSH("inode号为%hd的目录的inode成功更新到文件系统！\n", cur_inode->st_ino);
+    PRINTF_FLUSH("inode号为%hd的目录(父目录)的inode成功更新到文件系统！\n", cur_inode->st_ino);
 }
 
 // 删除目录时更新根目录信息
@@ -444,10 +443,14 @@ void get_free_data_blk(short int* ids, int num, int mode)
     int count_ids = 0;
     // 已经读取了多少个字节
     int byte_count = 0;
+    long off = 0;
     // 当读取字节数大于或等于BLOCK_SIZE时或者已经获得足够空闲块时，停止循环
     while (byte_count < max_byte_num && count_ids < num)
     {
+        off = ftell(reader);
         fread(&cur_byte, sizeof(unsigned char), 1, reader);
+        // 重置文件指针位置，方便后面写入
+        fseek(reader, off, SEEK_SET);
         for (int i = 0; i < 8; i++)
         {
             // 检查当前字节的每一位
@@ -455,7 +458,9 @@ void get_free_data_blk(short int* ids, int num, int mode)
             {
                 PRINTF_FLUSH("当前字节数：%d, 当前bit：%d\n", byte_count, i);
                 // 置为1
+                PRINTF_FLUSH("更新前的cur_byte的值为：%d\n", cur_byte);
                 cur_byte |= (1 << i);
+                PRINTF_FLUSH("更新后的cur_byte的值为：%d\n", cur_byte);
                 // 获得空闲块inode号
                 if (mode == 2)
                 {
@@ -473,12 +478,14 @@ void get_free_data_blk(short int* ids, int num, int mode)
                 }
             }
         }
+        // 写回文件，文件指针自动指向下一字节
+        fwrite(&cur_byte, sizeof(unsigned char), 1, reader);
         byte_count++;
     }
     fclose(reader);
     if (count_ids == num)
     {
-        PRINTF_FLUSH("成功申请得到和预期一致的%d个空闲块或inode号\n", count_ids);
+        PRINTF_FLUSH("成功申请得到和预期一致的%d个空闲块或inode号%hd\n", count_ids, *ids);
     }
     else if (count_ids > num)
     {
@@ -528,37 +535,6 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     long off = m_sb.first_inode * BLOCK_SIZE + (new_inode.st_ino - 1) * sizeof(struct inode);
     fseek(reader, off, SEEK_SET);
     fwrite(&new_inode, sizeof(struct inode), 1, reader);
-
-    // 更新inode位图区
-    int over_bytes_num = (new_inode.st_ino - 1) / 8;
-    PRINTF_FLUSH("over_bytes_num：%d\n", over_bytes_num);
-    int over_bit = (new_inode.st_ino - 1) % 8;
-    PRINTF_FLUSH("over_bit：%d\n", over_bit);
-    off = m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE + over_bytes_num;
-    PRINTF_FLUSH("off：%ld\n", off);
-
-    // 将文件指针移动到inode位图第一个字节
-    fseek(reader, off, SEEK_SET);
-    PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(reader));
-    unsigned char tmp_byte;
-
-    fread(&tmp_byte, 1, 1, reader);
-    PRINTF_FLUSH("inode_first_byte的值：%d\n", tmp_byte);
-
-    // tmp_byte += 0x01;
-    tmp_byte |= (1 << over_bit);
-    PRINTF_FLUSH("更新后的inode_first_byte的值：%d\n", tmp_byte);
-    // 将文件指针复位
-    fseek(reader, off, SEEK_SET);
-    PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(reader));
-    // 重新写回文件
-    if (1 != fwrite(&tmp_byte, 1, 1, reader)) {
-
-        PRINTF_FLUSH("inode位图区更新失败 %d\n", errno);
-        return -1;
-    }
-    PRINTF_FLUSH("写入后文件指针目前的位置：%ld\n", ftell(reader));
-    PRINTF_FLUSH("inode位图区更新成功！\n");
     fclose(reader);
     // 将dir_entry放入数据区，更新根目录的大小以及addr地址并将根目录信息重新写入文件系统
 
@@ -589,27 +565,29 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     memset(tmp_data_blk->data, '\0', BLOCK_MAX_DATA_SIZE);
     tmp_data_blk->used_size = 0;
     struct dir_entry* new_dir_entry = NULL;
-
+    short int* data_blk_ids = NULL;
     // 更新父目录大小信息
     parent_inode->st_size += sizeof(struct dir_entry);
     // 从来没有数据，只需新建数据块即可
     if (count == -1)
     {
+        PRINTF_FLUSH("父目录从来没有数据，需新建数据块\n");
         // 为父目录申请数据块地址
-        short int* ids = (short int*)malloc(sizeof(short int));
-        get_free_data_blk(ids, 1, 1);
-        parent_inode->addr[0] = *ids;
-
+        data_blk_ids = (short int*)malloc(sizeof(short int));
+        get_free_data_blk(data_blk_ids, 1, 1);
+        parent_inode->addr[0] = *data_blk_ids;
+        off = *data_blk_ids * BLOCK_SIZE;
         // 更新当前数据块已使用大小和数据信息
         new_dir_entry = (struct dir_entry*) tmp_data_blk->data;
     }
     // 原来的数据块有数据，要追加数据
     // 先读取原来的数据
-    else{
+    else
+    {
         FILE* reader = NULL;
         reader = fopen(disk_path, "r+");
         tmp_addr = parent_inode->addr[count];
-        long off = tmp_addr * BLOCK_SIZE;
+        off = tmp_addr * BLOCK_SIZE;
         fseek(reader, off, SEEK_SET);
         fread(tmp_data_blk, sizeof(struct data_block), 1, reader);
         fclose(reader);
@@ -624,9 +602,9 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
             if (count <= 2)
             {
                 // 更新根目录的addr数组信息和大小信息
-                short int* data_blk_ids = (short int*)malloc(sizeof(short int));
                 get_free_data_blk(data_blk_ids, 1, 1);
                 parent_inode->addr[count + 1] = *data_blk_ids;
+                off = *data_blk_ids * BLOCK_SIZE;
                 // 创建dir_entry对象并写入数据块
                 new_dir_entry = (struct dir_entry*) tmp_data_blk->data;
             }
@@ -654,6 +632,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
         // 原来的数据块还没满
         else
         {
+            PRINTF_FLUSH("原来的数据块还没满\n");
             // 更新当前数据块已使用大小和数据信息
             new_dir_entry = (struct dir_entry*) tmp_data_blk->data;
             // 移到要追加的位置
@@ -682,17 +661,17 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
         PRINTF_FLUSH("写入的新文件名为：%s\n", new_dir_entry->file_name);
         PRINTF_FLUSH("extension内容以及长度：%s, %zu\n", new_dir_entry->extension, strlen(new_dir_entry->extension));
     }
+    PRINTF_FLUSH("1\n");
     new_dir_entry->inode_id = new_inode.st_ino;
+    PRINTF_FLUSH("1\n");
     tmp_data_blk->used_size += sizeof(struct dir_entry);
-
+    PRINTF_FLUSH("1\n");
     // 将数据块信息写入文件
     reader = NULL;
     reader = fopen(disk_path, "r+");
-    
-    short int* data_blk_ids = (short int*)malloc(sizeof(short int));
-    get_free_data_blk(data_blk_ids, 1, 1);
-    off = *data_blk_ids * BLOCK_SIZE;
+    PRINTF_FLUSH("1\n");
     fseek(reader, off, SEEK_SET);
+    PRINTF_FLUSH("1\n");
     fwrite(tmp_data_blk, sizeof(struct data_block), 1, reader);
     PRINTF_FLUSH("目录项写入数据区成功！\n");
     fclose(reader);
@@ -732,6 +711,8 @@ int read_data_block(short int addr,struct data_block* data_blk)
     fclose(reader);
     return 0;
 }
+
+
 int get_root_inode(struct inode* tmp_node)
 {
     PRINTF_FLUSH("get_root_inode begin\n");
@@ -946,6 +927,7 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
         }
         
     }
+
 }
 
 
@@ -1041,36 +1023,43 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         return ret;
     }
     
-    // 检查是否有重名目录
-    // 1.读取根目录下的所有目录名
     struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
-    ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, target_inode);
-    PRINTF_FLUSH("查找目录结果：%d\n", ret);
-    PRINTF_FLUSH("-EPERM: %d\n", -EPERM);
-    PRINTF_FLUSH("-ENOENT: %d\n", -ENOENT);
-    
-    // 目录已存在
-    if (0 == ret)
+    // 如果是创建目录，检查根目录下是否有重名目录
+    if (type == 1)
     {
-        return -EEXIST;
+
+        ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, target_inode);
+        PRINTF_FLUSH("查找目录结果：%d\n", ret);
+        // 目录已存在
+        if (0 == ret)
+        {
+            return -EEXIST;
+        }
+        // 其他错误
+        else if (ret != -ENOENT)
+        {
+            PRINTF_FLUSH("其他错误！%d!=%d\n", ret, -EPERM);
+            return ret;
+        }
+        PRINTF_FLUSH("准备创建目录\n");
+        // 如果是创建目录，说明可以创建，在根目录下创建
+        return real_create_dir_or_file(&root_inode, mode, 1, m_paths.new_dir_file_fullname);
     }
-    // 其他错误
-    else if (ret != -ENOENT)
+    // 如果是创建文件，检查根目录下是否有父目录
+    else
     {
-        PRINTF_FLUSH("其他错误！%d!=%d\n", ret, -EPERM);
-        return ret;
+        ret = return_inode_check(m_paths.parent_dir, &root_inode, target_inode);
+        // 父目录不存在或有其他错误
+        if (0 != ret)
+        {
+            return ret;
+        }
+        PRINTF_FLUSH("准备创建文件\n");
+        // 如果是创建文件，说明可以创建，在父目录下创建
+        return real_create_dir_or_file(target_inode, mode, 2, m_paths.new_dir_file_fullname);
+
     }
-    // 不存在此目录名
-    PRINTF_FLUSH("不存在此目录！\n");
-    // 如果是创建文件,说明没找到父目录
-    if (2 == type)
-    {
-        PRINTF_FLUSH("没有找到文件的父目录!\n");
-        return -1;
-    }
-    PRINTF_FLUSH("准备创建目录\n");
-    // 如果是创建目录，说明可以创建，在根目录下创建
-    return real_create_dir_or_file(&root_inode, mode, 1, m_paths.new_dir_file_fullname);
+
 }
 
 
