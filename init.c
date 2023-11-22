@@ -21,7 +21,7 @@ int main() {
     m_sb.first_blk = 518;
     // 声明一个文件指针
     FILE *disk_file;
-    disk_file = fopen("diskimg", "r+");
+    disk_file = fopen(disk_path, "r+");
     if (disk_file == NULL) {
         perror("无法打开文件'dikimg'");
         return 1;
@@ -123,7 +123,7 @@ int main() {
     root_inode.file_name = "/";
     root_inode.inode_id = 1;
     printf("start\n");
-    FILE* reader = fopen("diskimg", "rb");
+    FILE* reader = fopen(disk_path, "rb");
     if (reader == NULL) {
         printf("diskimg打开失败");
     }
