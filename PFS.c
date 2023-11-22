@@ -69,171 +69,39 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
 
 // 先通过目录名（绝对路径）找出对应的inode号，再通过inode中的addr，访问这个目录的数据区，读取目录项
 
-static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler,off_t offset, struct fuse_file_info *fi)
+static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
-    PRINTF_FLUSH("pzj_readdir begin\n");
-    PRINTF_FLUSH( "tfs_readdir	 path : %s \n", path);
+    PRINTF_FLUSH( "pzj_readdir	 path : %s \n", path);
     // 所有目录都有的内容
     filler(buf, ".", NULL, 0, 0);
-    int first_ret = filler(buf, "..", NULL, 0, 0);
-    PRINTF_FLUSH("hello!\n");
+    filler(buf, "..", NULL, 0, 0);
     // 这是根目录
     if(strcmp(path, "/") == 0)
     {   
-        PRINTF_FLUSH("这是根目录\n");
-        // 由于是根目录，因此可以直接得到inode
-        int addr_num = sizeof(root_inode.addr) / sizeof(root_inode.addr[0]);
-        PRINTF_FLUSH("addr_num: %d\n", addr_num);
-        int tmp_addr;
-        for (int i = 0; i < addr_num; ++i)
-        {
-            tmp_addr = root_inode.addr[i];
-            PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
-
-            // 结束，没找到对应的目录
-            if (-1 == tmp_addr)
-            {
-                if (i == 0)
-                {
-                    return first_ret;
-                }
-                return -ENOENT;
-            }
-            else
-            {
-                // 直接地址，直接读取数据块中存储的目录项（包括文件）
-                if (i <= 3)
-                {
-                    // 停止条件
-                    // 1.到达块末尾
-                    // 2.读到数据为空
-
-                    // TODO：-----------------以下内容可以复用
-                    PRINTF_FLUSH("读取直接地址的数据\n");
-                    // 申请数据块内存
-                    struct data_block* data_blk = malloc(sizeof(struct data_block));
-                    // 读取数据块数据
-                    int ret = read_data_block(tmp_addr, data_blk);
-                    if (ret < 0)
-                    {
-                        return -1;
-                    }
-                    PRINTF_FLUSH("成功读取数据块内容\n");
-                    // 得到数据块中存储的dir_entry的个数
-                    int dir_num = data_blk->used_size / sizeof(struct dir_entry);
-                    PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
-                    // 申请文件全名内存
-                    char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
-                    // 得到当前数据块所有文件全名
-                    int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, data_blk);
-                    if (file_fullname_num < 0)
-                    {
-                        return -1;
-                    }
-                    PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
-                    PRINTF_FLUSH("以下是数据块中的文件名：\n");
-                    for (int i = 0; i < file_fullname_num; ++i)
-                    {
-                        char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
-                        if (file_fullnames != NULL)
-                        {
-                            strcpy(fullname, file_fullnames);
-                            PRINTF_FLUSH("%s\n", fullname);
-                            filler(buf, fullname, NULL, 0, 0);
-                        }
-                        else
-                        {
-                            // 处理无效的文件全名
-                            PRINTF_FLUSH("%d 无效\n", i);
-                        }
-                        file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
-                    }
-                    // -----------------以上内容可以复用
-                    PRINTF_FLUSH("装填filler完毕\n");
-                    
-                }
-                // 一次间接寻址，先找到所有存储到数据（目录项）的数据块，再读取这些数据块中的目录项
-                else if (i == 4)
-                {
-                    // 索引块地址
-                    short int index_blk_addr = tmp_addr;
-                    // 读出索引块的信息
-                    // 申请索引块内存
-                    struct data_block* data_blk = malloc(sizeof(struct data_block));
-                    // 读取索引块数据
-                    int ret = read_data_block(tmp_addr, data_blk);
-                    if (ret < 0)
-                    {
-                        free(data_blk);
-                        return -1;
-                    }
-                    PRINTF_FLUSH("成功读取一级索引块内容\n");
-                    // 计算存储的数据块的地址个数
-                    int addr_num = data_blk->used_size / sizeof(short int);
-                    int pos = 0;
-                    short int* data_addr = (short int*) data_blk->data;
-                    while (pos < data_blk->used_size)
-                    {
-                        short int tmp_data_addr = *data_addr;
-                        PRINTF_FLUSH("读取直接地址的数据\n");
-                        // 申请数据块内存
-                        struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
-                        // 读取数据块数据
-                        int ret = read_data_block(tmp_data_addr, tmp_data_blk);
-                        if (ret < 0)
-                        {
-                            
-                            free(tmp_data_blk);
-                            free(data_blk);
-                            return -1;
-                        }
-                        PRINTF_FLUSH("成功读取数据块内容\n");
-                        // 得到数据块中存储的dir_entry的个数
-                        int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
-                        PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
-                        // 申请文件全名内存
-                        char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
-                        // 得到当前数据块所有文件全名
-                        int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, tmp_data_blk);
-                        if (file_fullname_num < 0)
-                        {
-                            free(file_fullnames);
-                            free(tmp_data_blk);
-                            free(data_blk);
-                            return -1;
-                        }
-                        PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
-                        for (int i = 0; i < file_fullname_num; ++i)
-                        {
-                            char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
-                            if (file_fullnames != NULL)
-                            {
-                                strcpy(fullname, file_fullnames);
-                                PRINTF_FLUSH("%s\n", fullname);
-                                filler(buf, fullname, NULL, 0, 0);
-                            }
-                            else
-                            {
-                                // 处理无效的文件全名
-                                PRINTF_FLUSH("%d 无效\n", i);
-                            }
-                            file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
-                        }
-                        data_addr++;
-                        pos += sizeof(short int);
-                        free(file_fullnames);
-                        free(tmp_data_blk);
-                        free(data_blk);
-                    }
-                    
-                }
-                return 0;
-            }
-            
-        }
-
+        return return_full_name_check(&root_inode, &filler, buf);
     }
-    return filler(buf, "Hello-world", NULL, 0, 0);
+    else
+    {
+        struct paths m_paths;
+        char* p = (char*)&m_paths;
+        memset(p, '\0', sizeof(struct paths));
+        int ret = path_is_legal(path, &m_paths, 1);
+        PRINTF_FLUSH("路径解析结果：%d\n", ret);
+        if (0 != ret)
+        {
+            return ret;
+        }
+        struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
+        ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, target_inode);
+        PRINTF_FLUSH("父目录查找结果：%d\n", ret);
+        if (ret != 0)
+        {
+            return ret;
+        }
+        ret = return_full_name_check(target_inode, &filler, buf);
+        PRINTF_FLUSH("当前目录装填结果：%d\n", ret);
+        return ret;
+    }
 }
 
 /**
