@@ -56,6 +56,12 @@ struct super_block {
     long databitmap_size;      //数据块位图大小，以块为单位
 };
 
+/**
+ * st_size表示文件的字节大小，即文件中数据的实际大小。
+ * 对于普通文件而言，这个字段会反映文件中的实际数据大小。
+ * 对于目录文件，st_size通常是目录项所占用的字节数。
+ * 对于符号链接，st_size是链接目标的路径长度。
+*/
 // 存储权限信息以及内容的存储地址
 struct inode { 
     short int st_mode; /* 权限，2字节 */ 
@@ -390,7 +396,9 @@ void update_root_info(const struct inode cur_rm_inode, struct data_block* data_b
     fwrite(data_blk, sizeof(struct data_block), 1, reader);
     fclose(reader);
     // 更新根目录大小
-    root_inode.st_size -= cur_rm_inode.st_size;
+    PRINTF_FLUSH("根目录原来的大小为：%ld\n", root_inode.st_size);
+    root_inode.st_size -= sizeof(struct dir_entry);
+    PRINTF_FLUSH("删除目录后根目录的大小为：%ld\n", root_inode.st_size);
     // 更新根目录数据区地址
     if (data_blk->used_size == 0)
     {
@@ -521,7 +529,14 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     new_inode.st_nlink = 1;
     new_inode.st_uid = 0;
     new_inode.st_gid = 0;
-    new_inode.st_size = 0;
+    if (1 == type)
+    {
+        new_inode.st_size = sizeof(struct dir_entry);
+    }
+    else
+    {
+        new_inode.st_size = 0;
+    }
     struct timespec access_time;
     clock_gettime(CLOCK_REALTIME, &access_time);
     new_inode.st_atim = access_time;
@@ -566,8 +581,9 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     tmp_data_blk->used_size = 0;
     struct dir_entry* new_dir_entry = NULL;
     short int* data_blk_ids = NULL;
+    // linux中的inode，对于目录的大小是指dir_entry的大小，不会改变
     // 更新父目录大小信息
-    parent_inode->st_size += sizeof(struct dir_entry);
+    // parent_inode->st_size += sizeof(struct dir_entry);
     // 从来没有数据，只需新建数据块即可
     if (count == -1)
     {
