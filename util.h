@@ -407,7 +407,7 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
         parent_inode->addr[tmp_addr_i] = -1;
     }
     // 写回根目录信息
-    write_inode(&root_inode);
+    write_inode(parent_inode);
     PRINTF_FLUSH("成功更新根目录信息!\n");
 }
 
@@ -1093,11 +1093,6 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
         // 结束，没找到对应的目录或文件
         if (-1 == tmp_addr)
         {
-            // 判断是否是空目录
-            if (0 == i)
-            {
-                return -ENOTEMPTY;
-            }
             return -ENOENT;
         }
         else
@@ -1154,6 +1149,7 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                     }
                     if (0 == strcmp(dir_file_name, full_name))
                     {
+                        PRINTF_FLUSH("查找到相同的目录或文件名！\n");
                         short int target_inode_id = tmp_dir_entry->inode_id;
                         FILE* reader = NULL;
                         reader = fopen(disk_path, "rb");
@@ -1161,8 +1157,13 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                         fseek(reader, off, SEEK_SET);
                         struct inode tmp_inode;
                         fread(&tmp_inode, sizeof(struct inode), 1, reader);
-                        
                         fclose(reader);
+                        // 判断是否是空目录
+                        PRINTF_FLUSH("tmp_inode: %hd\ntmp_inode.addr[0]: %hd\n", tmp_inode.st_ino, tmp_inode.addr[0]);
+                        if (-1 != tmp_inode.addr[0])
+                        {
+                            return -ENOTEMPTY;
+                        }
                         // 更新父目录(根目录)信息
                         // 1.父目录大小
                         // 2.父目录addr地址数组
