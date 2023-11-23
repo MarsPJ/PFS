@@ -852,7 +852,6 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
                         reader = fopen(disk_path, "rb");
                         long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
                         fseek(reader, off, SEEK_SET);
-                        struct inode tmp_inode;
                         fread(target_inode, sizeof(struct inode), 1, reader);
                         fclose(reader);
                         free(data_blk);

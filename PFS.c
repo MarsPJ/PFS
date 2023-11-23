@@ -193,25 +193,33 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     {
         return 0;
     }
-    if (offset >= file_size || (offset + size) >= file_size)
+    if (offset >= file_size)
     {
         PRINTF_FLUSH("读入位置或大小超出文件大小！\n");
         return -EFBIG;
     }
+    else
+    {
+        if (offset + size > file_size) size = file_size - offset;
+    }
     short int data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
-    short int* data_blk_id = malloc(data_blk_num * sizeof(short int));
-    get_free_data_blk(data_blk_id, data_blk_num, 1);
     size_t remain_size = size;
     size_t read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
     for (int i = 0; i < data_blk_num; ++i)
     {
-        struct data_block* data_blk = malloc(sizeof(struct data_block));
-        read_data_block(target_inode->addr[i], data_blk);
-        strncpy(buf, data_blk->data, read_size);
+        PRINTF_FLUSH("cur_addr: %hd, read_size: %ld\n", target_inode->addr[i], read_size);
+        char* data_blk = malloc(BLOCK_SIZE);
+        FILE* reader = NULL;
+        reader = fopen(disk_path, "r+");
+        fseek(reader, target_inode->addr[i] * BLOCK_SIZE, SEEK_SET);
+        fread(buf, 1, read_size, reader);
+        fclose(reader);
+
         remain_size -= read_size;
         read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
 
     }
+    PRINTF_FLUSH("%s\n", buf);
     PRINTF_FLUSH("成功读出了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
     return size;
 
@@ -372,7 +380,8 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
 
 static int pzj_write (const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    printf("pzj_write %s\n", path);
+    PRINTF_FLUSH("pzj_write %s\n", path);
+    PRINTF_FLUSH("data: %s\n", buf);
     struct paths m_paths;
     char* p = (char*)&m_paths;
     memset(p, '\0', sizeof(struct paths));
@@ -412,6 +421,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
         reader = fopen(disk_path, "r+");
         for (int i = 0; i < data_blk_num; ++i)
         {
+            target_inode->addr[i] = data_blk_id[i];
             fseek(reader, data_blk_id[i] * BLOCK_SIZE, SEEK_SET);
             fwrite(buf, 1, write_size, reader);
             remain_size -= write_size;
@@ -420,9 +430,11 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
         }
 
         fclose(reader);
+        PRINTF_FLUSH("data: %s\n", buf);
         PRINTF_FLUSH("成功写入了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
         // 更新inode
         target_inode->st_size += size;
+        
         // 更新inode到文件系统
         write_inode(target_inode);
         return size;
