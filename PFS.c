@@ -356,3 +356,4 @@ int main(int argc, char *argv[]) {
 	// umask(0);
 	return fuse_main(argc, argv, &pzj_oper, NULL);
 }
+
