@@ -8,6 +8,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     struct paths m_paths;
     if (strcmp("/", path) == 0) {
         targe_inode = &root_inode;
+        stbuf->st_mode = S_IFDIR;
     }
     else 
     {
@@ -31,7 +32,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         
         if (0 == strcmp(m_paths.parent_dir, "\0"))
         {
-            
+            stbuf->st_mode = S_IFDIR;
             int ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
@@ -40,6 +41,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         }
         else
         {
+            stbuf->st_mode = S_IFREG;
             int ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
@@ -47,16 +49,38 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
             }
         }
     }
+    
     stbuf->st_ino = targe_inode->st_ino;
     PRINTF_FLUSH("新的inode号为: %lu\n", stbuf->st_ino);
-    stbuf->st_mode = targe_inode->st_mode | S_IFDIR;
+    stbuf->st_mode = targe_inode->st_mode | stbuf->st_mode;
+    PRINTF_FLUSH("1\n");
+    PRINTF_FLUSH("File mode: %08x\n", stbuf->st_mode);
     stbuf->st_nlink = targe_inode->st_nlink;
     stbuf->st_uid = targe_inode->st_uid;
     stbuf->st_gid = targe_inode->st_gid;
     stbuf->st_size = targe_inode->st_size;
     stbuf->st_atime = targe_inode->st_atim.tv_sec;
     stbuf->st_blocks = m_sb.first_inode + targe_inode->st_ino - 1;
-    PRINTF_FLUSH("成功找到%s\n", m_paths.new_dir_file_fullname);
+    PRINTF_FLUSH("成功找到ssfddafsss%s\n", m_paths.new_dir_file_fullname);
+
+    if (1) {
+        // 提取文件类型
+        if (S_ISREG(stbuf->st_mode)) {
+            printf("Regular file\n");
+        } else if (S_ISDIR(stbuf->st_mode)) {
+            printf("Directory\n");
+        } else if (S_ISLNK(stbuf->st_mode)) {
+            printf("Symbolic link\n");
+        } else {
+            printf("Other type\n");
+        }
+
+        // 提取文件权限
+        mode_t file_permissions = stbuf->st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+        printf("File permissions: %o\n", file_permissions);
+    } else {
+        perror("stat");
+    }
     return 0;
 }
 
@@ -69,7 +93,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
 
 // 先通过目录名（绝对路径）找出对应的inode号，再通过inode中的addr，访问这个目录的数据区，读取目录项
 
-static int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
     PRINTF_FLUSH( "pzj_readdir	 path : %s \n", path);
     // 所有目录都有的内容
@@ -143,6 +167,7 @@ static int pzj_unlink (const char *path)
 // size是用户要读取的数据大小，offset是文件偏移指针
 static int pzj_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+    PRINTF_FLUSH("pzj_read! size: %lu, offset: %ld\n", size, offset);
     struct paths m_paths;
     char* p = (char*)&m_paths;
     memset(p, '\0', sizeof(struct paths));
@@ -173,6 +198,23 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
         PRINTF_FLUSH("读入位置或大小超出文件大小！\n");
         return -EFBIG;
     }
+    short int data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
+    short int* data_blk_id = malloc(data_blk_num * sizeof(short int));
+    get_free_data_blk(data_blk_id, data_blk_num, 1);
+    size_t remain_size = size;
+    size_t read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
+    for (int i = 0; i < data_blk_num; ++i)
+    {
+        struct data_block* data_blk = malloc(sizeof(struct data_block));
+        read_data_block(target_inode->addr[i], data_blk);
+        strncpy(buf, data_blk->data, read_size);
+        remain_size -= read_size;
+        read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
+
+    }
+    PRINTF_FLUSH("成功读出了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
+    return size;
+
     int addr_num = sizeof(target_inode->addr) / sizeof(target_inode->addr[0]);
     PRINTF_FLUSH("addr_num: %d\n", addr_num);
     int tmp_addr;
@@ -184,8 +226,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
         // 结束，没找到对应的目录
         if (-1 == tmp_addr)
         {
-            target_inode = NULL;
-            return -ENOENT;
+            return 0;
         }
         else
         {
@@ -384,7 +425,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
         target_inode->st_size += size;
         // 更新inode到文件系统
         write_inode(target_inode);
-        return 0;
+        return size;
     }
 
 
@@ -414,7 +455,23 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     // —— ——不是的话申请空闲数据块并写入
     // 从写入位置开始，覆盖之前的数据内容
 }
+static int pzj_open(const char *path, struct fuse_file_info *fi)
+{
+    return 0;
+}
+//进入目录
+static int pzj_access(const char *path, int flag)
+{
+	return 0;
+}
+void * pzj_init(struct fuse_conn_info * conn_info, struct fuse_config * config) 
+{
+    get_sb_info();
+    get_root_inode(&root_inode);
+	printf("pzj_init：函数结束返回\n\n");
+}
 static struct fuse_operations pzj_oper = {
+    .init = pzj_init,
     .getattr = pzj_getattr,
     .readdir = pzj_readdir,
     .mkdir = pzj_mkdir,
@@ -423,34 +480,13 @@ static struct fuse_operations pzj_oper = {
     .rmdir = pzj_rmdir,
     .unlink = pzj_unlink,
     .read = pzj_read,
-    .write = pzj_write
+    .write = pzj_write,
+    .open = pzj_open,
+    .access = pzj_access
 };
 
-int main(int argc, char *argv[]) {
-
-    FILE* reader = fopen(disk_path, "rb");
-    if (reader == NULL) {
-        PRINTF_FLUSH("main中diskimg打开失败\n");
-        return -1;
-    }
-    PRINTF_FLUSH("成功打开\n");
-    fclose(reader);
-    // 读取超级块
-    get_sb_info();
-    // 初始化inode表第一个元素
-    struct inode_table_entry root_inode_entry;
-    root_inode_entry.file_name = "/";
-    root_inode_entry.inode_id = 1;
-    inode_table[0] = root_inode_entry;
-    // 读取根节点
-    int ret = get_root_inode(&root_inode);
-    if (-1 == ret)
-    {
-        return -1;
-    }
-
-    // return NULL;
-	// umask(0);
+int main(int argc, char *argv[]) 
+{
 	return fuse_main(argc, argv, &pzj_oper, NULL);
 }
 

@@ -9,6 +9,7 @@
 #include<sys/types.h>
 #include<fuse3/fuse.h>
 #include<string.h>
+#include<math.h>
 
 // 文件系统总大小
 #define FILE_SYSTEM_SIZE 8 * 1024 * 1024
@@ -520,7 +521,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
 
     // 创建inode
     struct inode new_inode;
-    new_inode.st_mode = mode;
+    new_inode.st_mode = 0755;
     short int* inode_ids = (short int*)malloc(sizeof(short int));
     get_free_data_blk(inode_ids, 1, 2);
     new_inode.st_ino = *inode_ids;
@@ -1566,7 +1567,7 @@ void cal_curaddr_idx_curaddr(short int blk_num_id, short int* curaddr, short int
 {
     if (blk_num_id <= 3)
     {
-        curaddr = m_sb.first_blk + blk_num_id;
-        curaddr_idx = blk_num_id;
+        *curaddr = m_sb.first_blk + blk_num_id;
+        *curaddr_idx = blk_num_id;
     }
 }
