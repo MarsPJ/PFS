@@ -1486,3 +1486,87 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
 
 }
 
+int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr)
+{
+    for (int i = cur_addr_idx; i < 7; ++i)
+    {
+        // 下一个是直接地址
+        if (i <= 2)
+        {
+            return addr[cur_addr_idx + 1];
+        }
+        // 下一个是一级间接地址
+        else if (cur_addr_idx == 3)
+        {
+            if (-1 == addr[cur_addr_idx + 1])
+            {
+                return -1;
+            }
+            else
+            {
+                struct data_block* data_blk = malloc(sizeof(struct data_block)); 
+                read_data_block(addr[cur_addr_idx + 1], data_blk);
+                short int* new_addr = (short int*)data_blk->data;
+                return *new_addr;
+            }
+        }
+        // 下一个是二级间接地址
+        else if (cur_addr_idx == 4)
+        {
+            // 先在本一级地址块找现在的地址
+            struct data_block* data_blk = malloc(sizeof(struct data_block)); 
+            read_data_block(addr[cur_addr_idx], data_blk);
+            short int* p = (short int*)data_blk->data;
+            int size = 0;
+            while(size < data_blk->used_size)
+            {
+                if (cur_addr == *p)
+                {
+                    if (size + sizeof(short int) > data_blk->used_size)
+                    {
+                        break;
+                    }
+                    p++;
+                    return *p;
+                }
+                p++;
+                size += sizeof(short int);
+            }
+            // 一级间接地址没有剩余的了，找二级间接地址
+            if (-1 == addr[cur_addr_idx + 1])
+            {
+                return -1;
+            }
+            else
+            {
+                struct data_block* data_blk = malloc(sizeof(struct data_block));
+                // 拿到二级间接地址块
+                read_data_block(addr[cur_addr_idx + 1], data_blk);
+                // 先拿到一个一级地址块地址
+                short int* new_addr = (short int*)data_blk->data;
+
+                return *new_addr;
+            }
+        }
+        // 下一个是三级间接地址
+        else if (cur_addr_idx == 5)
+        {
+
+        }
+        // 超出范围
+        else
+        {
+
+        }
+
+    }
+}
+// 根据从0标号的块地址转为实际块地址，一级addr中的idx
+void cal_curaddr_idx_curaddr(short int blk_num_id, short int* curaddr, short int* curaddr_idx)
+{
+    if (blk_num_id <= 3)
+    {
+        curaddr = m_sb.first_blk + blk_num_id;
+        curaddr_idx = blk_num_id;
+    }
+}

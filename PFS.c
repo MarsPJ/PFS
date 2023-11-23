@@ -161,8 +161,18 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     {
         return ret;
     }
-    
-
+    // 拿到文件inode
+    // 检查文件指针是否超出文件大小范围
+    off_t file_size = target_inode->st_size;
+    if (file_size == 0)
+    {
+        return 0;
+    }
+    if (offset >= file_size || (offset + size) >= file_size)
+    {
+        PRINTF_FLUSH("读入位置或大小超出文件大小！\n");
+        return -EFBIG;
+    }
     int addr_num = sizeof(target_inode->addr) / sizeof(target_inode->addr[0]);
     PRINTF_FLUSH("addr_num: %d\n", addr_num);
     int tmp_addr;
@@ -318,6 +328,92 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
 
     
 }
+
+static int pzj_write (const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    printf("pzj_write %s\n", path);
+    struct paths m_paths;
+    char* p = (char*)&m_paths;
+    memset(p, '\0', sizeof(struct paths));
+    int ret = path_is_legal(path, &m_paths, 2);
+    PRINTF_FLUSH("路径解析结果：%d\n", ret);
+    if (0 != ret)
+    {
+        return ret;
+    }
+    // TODO:判断是不是目录
+
+    struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
+    ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
+    PRINTF_FLUSH("查找目录结果：%d\n", ret);
+    if (ret !=0 )
+    {
+        return ret;
+    }
+    // 拿到文件inode
+    // 检查文件指针是否超出文件大小范围
+    off_t file_size = target_inode->st_size;
+    if (offset > file_size)
+    {
+        PRINTF_FLUSH("写入位置超出文件大小！\n");
+        return -EFBIG;
+    }
+    // 如果文件大小为0,只需要直接创建数据块即可(由于offset<=file_size,因此此时offset也为0)
+    PRINTF_FLUSH("开始写入文件!\n");
+    if (file_size == 0)
+    {
+        short int data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
+        short int* data_blk_id = malloc(data_blk_num * sizeof(short int));
+        get_free_data_blk(data_blk_id, data_blk_num, 1);
+        size_t remain_size = size;
+        size_t write_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
+        FILE* reader = NULL;
+        reader = fopen(disk_path, "r+");
+        for (int i = 0; i < data_blk_num; ++i)
+        {
+            fseek(reader, data_blk_id[i] * BLOCK_SIZE, SEEK_SET);
+            fwrite(buf, 1, write_size, reader);
+            remain_size -= write_size;
+            write_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
+
+        }
+
+        fclose(reader);
+        PRINTF_FLUSH("成功写入了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
+        // 更新inode
+        target_inode->st_size += size;
+        // 更新inode到文件系统
+        write_inode(target_inode);
+        return 0;
+    }
+
+
+    // 检查写入数据大小是否大于当前数据块的当前文件指针位置后面的大小
+    // 获得文件指针指向的块号
+    short int blk_num_id = offset / BLOCK_MAX_DATA_SIZE;
+    short int off_real_addr;
+    short int off_real_addr_idx;
+    cal_curaddr_idx_curaddr(blk_num_id, &off_real_addr, &off_real_addr_idx);
+    // 根据真实块号得到数据块
+    struct data_block* data_blk = malloc(sizeof(struct data_block));
+    read_data_block(off_real_addr, data_blk);
+    // 检查写入数据大小是否大于当前数据块的当前文件指针位置及后面的大小
+    // 得到当前文件指针位置及后面的大小
+    short int later_size = data_blk->used_size - offset;
+    // ——不是的话，直接覆盖即可
+    if (size < later_size)
+    {
+        FILE* reader = NULL;
+        reader = fopen(disk_path, "r+");
+        fclose(reader);
+
+    }
+
+    // ——是的话，检查后面是否还有数据块
+    // —— ——是的话直接覆盖数据，剩下的数据块被系统回收
+    // —— ——不是的话申请空闲数据块并写入
+    // 从写入位置开始，覆盖之前的数据内容
+}
 static struct fuse_operations pzj_oper = {
     .getattr = pzj_getattr,
     .readdir = pzj_readdir,
@@ -326,7 +422,8 @@ static struct fuse_operations pzj_oper = {
     .utimens = pzj_utimens,
     .rmdir = pzj_rmdir,
     .unlink = pzj_unlink,
-    .read = pzj_read
+    .read = pzj_read,
+    .write = pzj_write
 };
 
 int main(int argc, char *argv[]) {
