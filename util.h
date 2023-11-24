@@ -28,8 +28,10 @@
 #define INODE_AREA_BLOCK_NUM 512
 // 目录项大小
 #define DIR_ENTRY_SIZE 16
+// 每个数据块真正能被使用的有效空间
+#define BLOCK_MAX_DATA_SIZE BLOCK_SIZE - sizeof(size_t)
 // 每个数据块能存放的最大目录项数目
-#define DIR_ENTRY_MAXNUM_PER_BLOCK BLOCK_MAX_DATA_SIZE / DIR_ENTRY_SIZE
+#define DIR_ENTRY_MAXNUM_PER_BLOCK 31
 // 最大的文件名或目录名长度
 #define MAX_DIR_FILE_NAME_LEN 8
 // 文件名全名（文件名+扩展名）最大长度,不包括.
@@ -40,8 +42,7 @@
 #define MAX_ADDR_NUM_PER_INDEX_BLOCK BLOCK_SIZE / sizeof(short) 
 // 总共的数据块个数（包括索引块）
 #define BLOCK_TOTAL_NUM FILE_SYSTEM_SIZE / BLOCK_SIZE
-// 每个数据块真正能被使用的有效空间
-#define BLOCK_MAX_DATA_SIZE BLOCK_SIZE - sizeof(size_t)
+
 
 // 每个块512字节
 // 超级块(1)，inode位图区(1)，数据块位图（4），inode区（512）
@@ -510,8 +511,7 @@ int read_data_block(short addr,struct data_block* data_blk)
 
 // target_data_blk表示读取下一个地址的所在索引块的信息，如果下一个地址是直接地址或者当前索引块已经装满，则置为NULL，并
 
-void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx,
- struct data_block* parent_data_blk, struct data_block* grandfather_data_blk)
+void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx, struct data_block* parent_data_blk, struct data_block* grandfather_data_blk)
 {
     short cur_addr_idx = *next_addr_idx;
     short cur_addr = *next_addr;
@@ -559,12 +559,22 @@ void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx,
             {
                 if (cur_addr == *p)
                 {
-                    // 一级地址读完或者用完了
+                    // 一级地址读完
                     if (size + sizeof(short) > data_blk->used_size)
                     {
-                        break;
+                        // 一级地址用完了
+                        if (data_blk->used_size >= BLOCK_MAX_DATA_SIZE)
+                        {
+                            break;
+                        }
+                        // 一级地址还没用完
+                        else
+                        {
+                            *next_addr = -1;
+                            *next_addr_idx = cur_addr_idx;
+                        }
                     }
-                    // 一级地址没读完或没用完
+                    // 一级地址没读完
                     p++;
                     *next_addr = *p;
                     *next_addr_idx = cur_addr_idx;
@@ -573,12 +583,13 @@ void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx,
                 p++;
                 size += sizeof(short);
             }
+            
             // 一级间接地址没有剩余的了，找二级间接地址
             if (-1 == addr[cur_addr_idx + 1])
             {
 
                 *next_addr = -1;
-                *next_addr_idx = -1;
+                *next_addr_idx = cur_addr_idx + 1;
                 return;
             }
             else
@@ -591,7 +602,7 @@ void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx,
                 short* new_addr = (short*)data_blk->data;
 
                 *next_addr = *new_addr;
-                *next_addr_idx = cur_addr_idx + 1;
+                *next_addr_idx = cur_addr_idx;
                 return;
             }
         }
@@ -616,6 +627,7 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
     struct data_block* direct_data_blk = NULL;
     struct data_block* parent_data_blk = NULL;
     struct data_block* grandfather_data_blk = NULL;
+    short cur_addr = *next_addr;
     get_valid_addr(addr, next_addr, next_addr_idx, parent_data_blk, grandfather_data_blk);
     if (flag == 1)
     {
@@ -631,6 +643,7 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
             // 申请空闲数据块
             get_free_data_blk(blk_id, 1, 1);
             // 更新addr数组
+            *next_addr = *blk_id;
             addr[*next_addr_idx] = *blk_id;
         }
         // 下一个是一级索引
@@ -648,6 +661,7 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
             // 将数据块地址写入索引块地址
             short* direct_addr = (short*)data_blk->data;
             *direct_addr = blk_id[1];
+            *next_addr = *direct_addr;
             FILE* reader = NULL;
             reader = fopen(disk_path, "r+");
             fseek(reader, blk_id[0] * BLOCK_SIZE, SEEK_SET);
@@ -655,6 +669,31 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
             fclose(reader);
             // 更新addr数组
             addr[*next_addr_idx] = blk_id[0];
+        }
+
+    }
+    // 还有一级索引
+    else if (parent_data_blk != NULL && grandfather_data_blk == NULL)
+    {
+        int size = 0;
+        short* p = (short*)parent_data_blk->data;
+        while(size < parent_data_blk->used_size)
+        {
+            p++;
+            size += sizeof(short);
+        }
+        if (size < BLOCK_MAX_DATA_SIZE)
+        {
+            get_free_data_blk(next_addr, 1, 1);
+            *p = *next_addr;
+            FILE* reader = NULL;
+            reader = fopen(disk_path, "r+");
+            fwrite(parent_data_blk, sizeof(struct data_block), 1, reader);
+            fclose(reader);
+        }
+        else
+        {
+            // 
         }
 
     }
@@ -771,7 +810,11 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
         {
             PRINTF_FLUSH("当前有效块已满，需要新建块\n");
             // 申请可用地址addr以及更新addr数组
+            PRINTF_FLUSH("原来tmp_addr为：%hd\n", tmp_addr);
+            PRINTF_FLUSH("原来count为：%hd\n", count);
             update_addr(parent_inode->addr, &tmp_addr, &count, 2);
+            PRINTF_FLUSH("update_addr返回的地址为：%hd\n", tmp_addr);
+             PRINTF_FLUSH("update_addr返回的count为：%hd\n", count);
             read_data_block(tmp_addr, tmp_data_blk);
             // 指向等下要把数据重新写回数据块的位置
             off = tmp_addr * BLOCK_SIZE;
@@ -1100,21 +1143,27 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     // 如果是创建文件，检查根目录下是否有父目录
     else
     {
-        
-        ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
+        struct inode* parent_inode = (struct inode*)malloc(sizeof(struct inode));
+        ret = return_inode_check(m_paths.parent_dir, &root_inode, parent_inode);
         // 父目录不存在或有其他错误
-        if (0 != ret && ret != -ENOENT)
+        if (0 != ret)
         {
             return ret;
         }
-        else if (0 == ret)
+        // 父目录存在，检查文件是否存在
+        ret = return_inode_check(m_paths.new_dir_file_fullname, parent_inode, target_inode);
+        if (ret !=0 && ret != -ENOENT)
+        {
+            return ret;
+        }
+        if (ret == 0)
         {
             return -EEXIST;
         }
         PRINTF_FLUSH("准备创建文件\n");
         // 如果是创建文件，说明可以创建，在父目录下创建
-        PRINTF_FLUSH("父目录inode为：%hd\n", target_inode->st_ino);
-        return real_create_dir_or_file(target_inode, mode, 2, m_paths.new_dir_file_fullname);
+        PRINTF_FLUSH("父目录inode为：%hd\n", parent_inode->st_ino);
+        return real_create_dir_or_file(parent_inode, mode, 2, m_paths.new_dir_file_fullname);
 
     }
 

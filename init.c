@@ -8,7 +8,14 @@
     * b）将根目录的相关信息填写到inode区的第一个inode。
 */
 int main() {
-    PRINTF_FLUSH("short: %ld\n", sizeof(short));
+    // PRINTF_FLUSH("size_t: %ld\n", sizeof(size_t));
+    // PRINTF_FLUSH("DIR_ENTRY_MAXNUM_PER_BLOCK: %d\n", DIR_ENTRY_MAXNUM_PER_BLOCK);
+    // PRINTF_FLUSH("BLOCK_MAX_DATA_SIZE: %ld\n", BLOCK_MAX_DATA_SIZE);
+    // PRINTF_FLUSH("DIR_ENTRY_SIZE: %ld\n", DIR_ENTRY_SIZE);
+    // PRINTF_FLUSH("BLOCK_MAX_DATA_SIZE / DIR_ENTRY_SIZE: %ld\n", BLOCK_MAX_DATA_SIZE / DIR_ENTRY_SIZE);
+    
+    // PRINTF_FLUSH("MAX_ADDR_NUM_PER_INDEX_BLOCK: %ld\n", MAX_ADDR_NUM_PER_INDEX_BLOCK);
+    
     struct dir_entry t;
     PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t));
     PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.file_name));

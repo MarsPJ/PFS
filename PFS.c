@@ -205,180 +205,32 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     {
         if (offset + size > file_size) size = file_size - offset;
     }
-    short data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
+
+    int addr_num = sizeof(target_inode->addr) / sizeof(target_inode->addr[0]);
+    PRINTF_FLUSH("addr_num: %d\n", addr_num);
+    short cur_addr_idx = -1;
+    short cur_addr = -1;
+    update_addr(target_inode->addr, &cur_addr, &cur_addr_idx, 1);
     size_t remain_size = size;
-    size_t read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
-    for (int i = 0; i < data_blk_num; ++i)
+    while (-1 != cur_addr)
     {
-        PRINTF_FLUSH("cur_addr: %hd, read_size: %ld\n", target_inode->addr[i], read_size);
-        char* data_blk = malloc(BLOCK_SIZE);
+
+        size_t read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
+        PRINTF_FLUSH("cur_addr: %hd, read_size: %ld\n", cur_addr, read_size);
         FILE* reader = NULL;
         reader = fopen(disk_path, "r+");
-        fseek(reader, target_inode->addr[i] * BLOCK_SIZE, SEEK_SET);
+        fseek(reader, cur_addr * BLOCK_SIZE, SEEK_SET);
         fread(buf, 1, read_size, reader);
         fclose(reader);
 
         remain_size -= read_size;
         read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
 
+        update_addr(target_inode->addr, &cur_addr, &cur_addr_idx, 1);
     }
     PRINTF_FLUSH("%s\n", buf);
     PRINTF_FLUSH("成功读出了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
     return size;
-
-    int addr_num = sizeof(target_inode->addr) / sizeof(target_inode->addr[0]);
-    PRINTF_FLUSH("addr_num: %d\n", addr_num);
-    int tmp_addr;
-    for (int i = 0; i < addr_num; ++i)
-    {
-        tmp_addr = target_inode->addr[i];
-        PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
-
-        // 结束，没找到对应的目录
-        if (-1 == tmp_addr)
-        {
-            return 0;
-        }
-        else
-        {
-            // 直接地址，直接读取数据块中存储的目录项（包括文件）
-            if (i <= 3)
-            {
-                // 停止条件
-                // 1.到达块末尾
-                // 2.读到数据为空
-
-                // TODO：-----------------以下内容可以复用
-                PRINTF_FLUSH("读取直接地址的数据\n");
-                // 申请数据块内存
-                struct data_block* data_blk = malloc(sizeof(struct data_block));
-                // 读取数据块数据
-                int ret = read_data_block(tmp_addr, data_blk);
-                if (ret < 0)
-                {
-                    target_inode = NULL;
-                    return -1;
-                }
-                PRINTF_FLUSH("成功读取数据块内容\n");
-                // 得到数据块中存储的dir_entry的个数
-                size_t dir_num = data_blk->used_size / sizeof(struct dir_entry);
-                PRINTF_FLUSH("used_size：%zu\n", data_blk->used_size);
-                PRINTF_FLUSH("数据块存储的目录项个数为%zu\n", dir_num);
-                int count = 0;
-                int pos = 0;
-                struct dir_entry* tmp_dir_entry = (struct dir_entry*) data_blk->data;
-                while (pos < data_blk->used_size)
-                {
-                    char full_name[MAX_FILE_FULLNAME_LENGTH + 2];
-                    strcpy(full_name, tmp_dir_entry->file_name);
-                    if (0 != strlen(tmp_dir_entry->extension))
-                    {
-                        strcat(full_name, ".");
-                        strcat(full_name, tmp_dir_entry->extension);    
-                    }
-                    if (0 == strcmp(m_paths.new_dir_file_fullname, full_name))
-                    {
-                        short target_inode_id = tmp_dir_entry->inode_id;
-                        FILE* reader = NULL;
-                        reader = fopen(disk_path, "rb");
-                        long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
-                        fseek(reader, off, SEEK_SET);
-                        struct inode tmp_inode;
-                        fread(target_inode, sizeof(struct inode), 1, reader);
-                        fclose(reader);
-                        free(data_blk);
-                        return 0;
-
-                    }
-                    tmp_dir_entry++;
-                    pos += sizeof(struct dir_entry);
-                }
-            }
-            // 一次间接寻址，先找到所有存储到数据（目录项）的数据块，再读取这些数据块中的目录项
-            else if (i == 4)
-            {
-                // 索引块地址
-                short index_blk_addr = tmp_addr;
-                // 读出索引块的信息
-                // 申请索引块内存
-                struct data_block* data_blk = malloc(sizeof(struct data_block));
-                // 读取索引块数据
-                int ret = read_data_block(tmp_addr, data_blk);
-                if (ret < 0)
-                {
-                    free(data_blk);
-                    return -1;
-                }
-                PRINTF_FLUSH("成功读取一级索引块内容\n");
-                // 计算存储的数据块的地址个数
-                int addr_num = data_blk->used_size / sizeof(short);
-                int pos = 0;
-                short* data_addr = (short*) data_blk->data;
-                while (pos < data_blk->used_size)
-                {
-                    short tmp_data_addr = *data_addr;
-                    PRINTF_FLUSH("读取直接地址的数据\n");
-                    // 申请数据块内存
-                    struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
-                    // 读取数据块数据
-                    int ret = read_data_block(tmp_data_addr, tmp_data_blk);
-                    if (ret < 0)
-                    {
-                        free(data_blk);
-                        free(tmp_data_blk);
-                        return -1;
-                    }
-                    PRINTF_FLUSH("成功读取数据块内容\n");
-                    // 得到数据块中存储的dir_entry的个数
-                    int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
-                    PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
-                    // 申请文件全名内存
-                    char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
-                    // 得到当前数据块所有文件全名
-                    int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, tmp_data_blk);
-                    if (file_fullname_num < 0)
-                    {
-                        free(data_blk);
-                        free(tmp_data_blk);
-                        free(file_fullnames);
-                        return -1;
-                    }
-                    PRINTF_FLUSH("数据块存储的文件名个数为%d\n", file_fullname_num);
-                    for (int i = 0; i < file_fullname_num; ++i)
-                    {
-                        if (file_fullnames != NULL)
-                        {
-                            if ( 0 == strcmp(file_fullnames, m_paths.new_dir_file_fullname))
-                            {
-                                PRINTF_FLUSH("目录已存在，无法创建重名的目录！\n");
-                                free(data_blk);
-                                free(tmp_data_blk);
-                                free(file_fullnames);
-                                return -EEXIST;
-                            }
-                        }
-                        else
-                        {
-                            // 处理无效的文件全名
-                            PRINTF_FLUSH("%d 无效\n", i);
-                        }
-                        file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
-                    }
-                    data_addr++;
-                    pos += sizeof(short);
-                    free(tmp_data_blk);
-                    free(file_fullnames);
-                }
-                free(data_blk);
-                
-            }
-            
-        }
-        
-    }
-
-
-    
 }
 
 static int pzj_write (const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
