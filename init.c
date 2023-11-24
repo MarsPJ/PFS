@@ -94,9 +94,6 @@ int main() {
     fseek(disk_file, BLOCK_SIZE * m_sb.first_inode, SEEK_SET);
     printf("根目录初始化成功！\n");
     
-
-
-
     // 显示当前时间
     struct tm time_info;
     char time_str[80];
@@ -119,16 +116,12 @@ int main() {
         return 1;
     }
     fclose(disk_file);
-    struct inode_table_entry root_inode;
-    root_inode.file_name = "/";
-    root_inode.inode_id = 1;
     printf("start\n");
     FILE* reader = fopen(disk_path, "rb");
     if (reader == NULL) {
         printf("diskimg打开失败");
     }
     else {
-        printf("root_inode: %hd\n", root_inode.inode_id);
         fseek(reader, m_sb.first_inode * BLOCK_SIZE, SEEK_SET);
         struct inode tmp_node;
         fread(&tmp_node, sizeof(struct inode), 1, reader);

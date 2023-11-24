@@ -75,11 +75,6 @@ struct inode {
     short int addr[7];    /* 磁盘地址，14字节 */
 };
 
-struct inode_table_entry {
-    char* file_name;
-    short int inode_id;
-};
-
 // 只有超级块(1)，inode位图区(1)，数据块位图（4），inode区（512）之后的块才会用到（即数据块和索引块）
 struct data_block
 {
@@ -102,12 +97,6 @@ const char* disk_path = "/root/data/PFS/diskimg";
 // 根目录
 struct inode root_inode;
 
-// 记录当前已经被使用的最大的inode的id
-short int cur_inode_id = 1;
-// 记录当前已经被使用的最大的数据块号的id(根据数据块进行编号)
-short int cur_data_blk_id = -1;
-
-struct inode_table_entry inode_table[INODE_AREA_BLOCK_NUM];
 
 #define PRINTF_FLUSH(fmt, ...) do { \
     printf(fmt, ##__VA_ARGS__); \
@@ -156,8 +145,6 @@ struct paths
 {
     char parent_dir[MAX_FILE_FULLNAME_LENGTH + 2];
     char new_dir_file_fullname[MAX_FILE_FULLNAME_LENGTH + 2];
-    char file_name[MAX_DIR_FILE_NAME_LEN + 1];
-    char extension[3 + 1];
 };
 
 // 路径分割(以/开头)，将路径分割成父目录、文件名（不包括扩展名）、扩展名
@@ -191,7 +178,7 @@ int split_path(const char* origin_path, struct paths* m_paths)
         strncpy(m_paths->parent_dir, path_cp, parent_dir_len);
         PRINTF_FLUSH("父目录：%s\n", m_paths->parent_dir);
         // 得到文件名和扩展名
-        return SplitFileNameAndExtension(m_paths->new_dir_file_fullname, m_paths->file_name, m_paths->extension);
+        return 0;
         
     }
     // 没有二级目录
@@ -208,7 +195,7 @@ int split_path(const char* origin_path, struct paths* m_paths)
         printf("没有二级目录，目录或文件全名: %s\n", m_paths->new_dir_file_fullname);
         // PRINTF_FLUSH("1\n");
         // 得到文件名和扩展名
-        return SplitFileNameAndExtension(m_paths->new_dir_file_fullname, m_paths->file_name, m_paths->extension);
+        return 0;
     }
 }
 
@@ -745,8 +732,6 @@ int get_root_inode(struct inode* tmp_node)
         // struct inode tmp_node;
         // fread(&tmp_node, sizeof(struct inode), 1, reader);
         // PRINTF_FLUSH("%hd, %hd\n", tmp_node.st_ino, tmp_node.addr[0]);
-
-        PRINTF_FLUSH("inodetable:\ninode_table[0].inode_id:, %hd, inode_table[0].file_name: %s\n", inode_table[0].inode_id, inode_table[0].file_name);
         fseek(reader, m_sb.first_inode * BLOCK_SIZE, SEEK_SET);
         fread(tmp_node, sizeof(struct inode), 1, reader);
         PRINTF_FLUSH("get_root_inode:\n tmp_node->st_ino: %hd,  tmp_node->addr: %hd\n", tmp_node->st_ino, tmp_node->addr[0]);
@@ -1160,7 +1145,7 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                         fclose(reader);
                         // 判断是否是空目录
                         PRINTF_FLUSH("tmp_inode: %hd\ntmp_inode.addr[0]: %hd\n", tmp_inode.st_ino, tmp_inode.addr[0]);
-                        if (-1 != tmp_inode.addr[0])
+                        if (type == 1 && -1 != tmp_inode.addr[0])
                         {
                             return -ENOTEMPTY;
                         }
