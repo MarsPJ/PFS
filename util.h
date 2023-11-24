@@ -1314,180 +1314,36 @@ int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, 
     }
     return 0;
 }
-
-int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* filler, void *buf)
+void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx)
 {
-    // 由于是根目录，因此可以直接得到inode
-    int addr_num = sizeof(par_parent_inode->addr) / sizeof(par_parent_inode->addr[0]);
-    PRINTF_FLUSH("addr_num: %d\n", addr_num);
-    int tmp_addr;
-    for (int i = 0; i < addr_num; ++i)
-    {
-        tmp_addr = par_parent_inode->addr[i];
-        PRINTF_FLUSH("tmp_addr: %hd\n", tmp_addr);
-
-        // 结束，没找到对应的目录
-        if (-1 == tmp_addr)
-        {
-            return 0;
-        }
-        else
-        {
-            // 直接地址，直接读取数据块中存储的目录项（包括文件）
-            if (i <= 3)
-            {
-                // 停止条件
-                // 1.到达块末尾
-                // 2.读到数据为空
-
-                // TODO：-----------------以下内容可以复用
-                PRINTF_FLUSH("读取直接地址的数据\n");
-                // 申请数据块内存
-                struct data_block* data_blk = malloc(sizeof(struct data_block));
-                // 读取数据块数据
-                int ret = read_data_block(tmp_addr, data_blk);
-                if (ret < 0)
-                {
-                    return -1;
-                }
-                PRINTF_FLUSH("成功读取数据块内容\n");
-                // 得到数据块中存储的dir_entry的个数
-                int dir_num = data_blk->used_size / sizeof(struct dir_entry);
-                PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
-                // 申请文件全名内存
-                char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
-                // 得到当前数据块所有文件全名
-                int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, data_blk);
-                if (file_fullname_num < 0)
-                {
-                    return -1;
-                }
-                PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
-                PRINTF_FLUSH("以下是数据块中的文件名：\n");
-                for (int i = 0; i < file_fullname_num; ++i)
-                {
-                    char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
-                    if (file_fullnames != NULL)
-                    {
-                        strcpy(fullname, file_fullnames);
-                        PRINTF_FLUSH("%s\n", fullname);
-                        (*filler)(buf, fullname, NULL, 0, 0);
-                    }
-                    else
-                    {
-                        // 处理无效的文件全名
-                        PRINTF_FLUSH("%d 无效\n", i);
-                    }
-                    file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
-                }
-                // -----------------以上内容可以复用
-                PRINTF_FLUSH("装填filler完毕\n");
-                
-            }
-            // 一次间接寻址，先找到所有存储到数据（目录项）的数据块，再读取这些数据块中的目录项
-            else if (i == 4)
-            {
-                // 索引块地址
-                short index_blk_addr = tmp_addr;
-                // 读出索引块的信息
-                // 申请索引块内存
-                struct data_block* data_blk = malloc(sizeof(struct data_block));
-                // 读取索引块数据
-                int ret = read_data_block(tmp_addr, data_blk);
-                if (ret < 0)
-                {
-                    free(data_blk);
-                    return -1;
-                }
-                PRINTF_FLUSH("成功读取一级索引块内容\n");
-                // 计算存储的数据块的地址个数
-                int addr_num = data_blk->used_size / sizeof(short);
-                int pos = 0;
-                short* data_addr = (short*) data_blk->data;
-                while (pos < data_blk->used_size)
-                {
-                    short tmp_data_addr = *data_addr;
-                    PRINTF_FLUSH("读取直接地址的数据\n");
-                    // 申请数据块内存
-                    struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
-                    // 读取数据块数据
-                    int ret = read_data_block(tmp_data_addr, tmp_data_blk);
-                    if (ret < 0)
-                    {
-                        
-                        free(tmp_data_blk);
-                        free(data_blk);
-                        return -1;
-                    }
-                    PRINTF_FLUSH("成功读取数据块内容\n");
-                    // 得到数据块中存储的dir_entry的个数
-                    int dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
-                    PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
-                    // 申请文件全名内存
-                    char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
-                    // 得到当前数据块所有文件全名
-                    int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, tmp_data_blk);
-                    if (file_fullname_num < 0)
-                    {
-                        free(file_fullnames);
-                        free(tmp_data_blk);
-                        free(data_blk);
-                        return -1;
-                    }
-                    PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
-                    for (int i = 0; i < file_fullname_num; ++i)
-                    {
-                        char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
-                        if (file_fullnames != NULL)
-                        {
-                            strcpy(fullname, file_fullnames);
-                            PRINTF_FLUSH("%s\n", fullname);
-                            (*filler)(buf, fullname, NULL, 0, 0);
-                        }
-                        else
-                        {
-                            // 处理无效的文件全名
-                            PRINTF_FLUSH("%d 无效\n", i);
-                        }
-                        file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
-                    }
-                    data_addr++;
-                    pos += sizeof(short);
-                    free(file_fullnames);
-                    free(tmp_data_blk);
-                    free(data_blk);
-                }
-                
-            }
-            return 0;
-        }
-        
-    }
-
-}
-
-int get_valid_addr(short addr[7], short cur_addr_idx, short cur_addr)
-{
+    short cur_addr_idx = *next_addr_idx;
+    short cur_addr = *next_addr;
     for (int i = cur_addr_idx; i < 7; ++i)
     {
         // 下一个是直接地址
         if (i <= 2)
         {
-            return addr[cur_addr_idx + 1];
+            *next_addr =  addr[cur_addr_idx + 1];
+            *next_addr_idx = cur_addr_idx + 1;
+            return;
         }
         // 下一个是一级间接地址
         else if (cur_addr_idx == 3)
         {
             if (-1 == addr[cur_addr_idx + 1])
             {
-                return -1;
+                *next_addr = -1;
+                *next_addr_idx = -1;
+                return;
             }
             else
             {
                 struct data_block* data_blk = malloc(sizeof(struct data_block)); 
                 read_data_block(addr[cur_addr_idx + 1], data_blk);
                 short* new_addr = (short*)data_blk->data;
-                return *new_addr;
+                *next_addr = *new_addr;
+                *next_addr_idx = cur_addr_idx + 1;
+                return;
             }
         }
         // 下一个是二级间接地址
@@ -1507,7 +1363,9 @@ int get_valid_addr(short addr[7], short cur_addr_idx, short cur_addr)
                         break;
                     }
                     p++;
-                    return *p;
+                    *next_addr = *p;
+                    *next_addr_idx = cur_addr_idx;
+                    return;
                 }
                 p++;
                 size += sizeof(short);
@@ -1515,7 +1373,10 @@ int get_valid_addr(short addr[7], short cur_addr_idx, short cur_addr)
             // 一级间接地址没有剩余的了，找二级间接地址
             if (-1 == addr[cur_addr_idx + 1])
             {
-                return -1;
+
+                *next_addr = -1;
+                *next_addr_idx = -1;
+                return;
             }
             else
             {
@@ -1525,7 +1386,9 @@ int get_valid_addr(short addr[7], short cur_addr_idx, short cur_addr)
                 // 先拿到一个一级地址块地址
                 short* new_addr = (short*)data_blk->data;
 
-                return *new_addr;
+                *next_addr = *new_addr;
+                *next_addr_idx = cur_addr_idx + 1;
+                return;
             }
         }
         // 下一个是三级间接地址
@@ -1541,6 +1404,64 @@ int get_valid_addr(short addr[7], short cur_addr_idx, short cur_addr)
 
     }
 }
+
+int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* filler, void *buf)
+{
+    // 由于是根目录，因此可以直接得到inode
+    int addr_num = sizeof(par_parent_inode->addr) / sizeof(par_parent_inode->addr[0]);
+    PRINTF_FLUSH("addr_num: %d\n", addr_num);
+    short cur_addr_idx = -1;
+    short cur_addr = -1;
+    get_valid_addr(par_parent_inode->addr, &cur_addr, &cur_addr_idx);
+
+    int count = 0;
+    while (-1 != cur_addr)
+    {
+        // 申请数据块内存
+        struct data_block* data_blk = malloc(sizeof(struct data_block));
+        // 读取数据块数据
+        int ret = read_data_block(cur_addr, data_blk);
+        if (ret < 0)
+        {
+            return -1;
+        }
+        PRINTF_FLUSH("成功读取数据块内容\n");
+        // 得到数据块中存储的dir_entry的个数
+        int dir_num = data_blk->used_size / sizeof(struct dir_entry);
+        PRINTF_FLUSH("数据块存储的目录项个数为%d\n", dir_num);
+        // 申请文件全名内存
+        char* file_fullnames = malloc(sizeof(char) * dir_num * (MAX_FILE_FULLNAME_LENGTH + 2));
+        // 得到当前数据块所有文件全名
+        int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, data_blk);
+        if (file_fullname_num < 0)
+        {
+            return -1;
+        }
+        PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
+        PRINTF_FLUSH("以下是数据块中的文件名：\n");
+        for (int i = 0; i < file_fullname_num; ++i)
+        {
+            char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
+            if (file_fullnames != NULL)
+            {
+                strcpy(fullname, file_fullnames);
+                PRINTF_FLUSH("%s\n", fullname);
+                (*filler)(buf, fullname, NULL, 0, 0);
+            }
+            else
+            {
+                // 处理无效的文件全名
+                PRINTF_FLUSH("%d 无效\n", i);
+            }
+            file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
+        }
+
+        get_valid_addr(par_parent_inode->addr, &cur_addr, &cur_addr_idx);
+    }
+    PRINTF_FLUSH("装填filler完毕\n");
+}
+
+
 // 根据从0标号的块地址转为实际块地址，一级addr中的idx
 void cal_curaddr_idx_curaddr(short blk_num_id, short* curaddr, short* curaddr_idx)
 {
