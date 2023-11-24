@@ -8,6 +8,13 @@
     * b）将根目录的相关信息填写到inode区的第一个inode。
 */
 int main() {
+    PRINTF_FLUSH("short: %ld\n", sizeof(short));
+    struct dir_entry t;
+    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t));
+    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.file_name));
+    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.extension));
+    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.inode_id));
+    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.reserved));
     struct super_block m_sb;
     m_sb.fs_size = FILE_SYSTEM_SIZE / BLOCK_SIZE;
     m_sb.inodebitmap_size = INODE_BITMAP_BLOCK_NUM;

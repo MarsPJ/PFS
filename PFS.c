@@ -205,7 +205,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     {
         if (offset + size > file_size) size = file_size - offset;
     }
-    short int data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
+    short data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
     size_t remain_size = size;
     size_t read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
     for (int i = 0; i < data_blk_num; ++i)
@@ -278,7 +278,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
                     }
                     if (0 == strcmp(m_paths.new_dir_file_fullname, full_name))
                     {
-                        short int target_inode_id = tmp_dir_entry->inode_id;
+                        short target_inode_id = tmp_dir_entry->inode_id;
                         FILE* reader = NULL;
                         reader = fopen(disk_path, "rb");
                         long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
@@ -298,7 +298,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
             else if (i == 4)
             {
                 // 索引块地址
-                short int index_blk_addr = tmp_addr;
+                short index_blk_addr = tmp_addr;
                 // 读出索引块的信息
                 // 申请索引块内存
                 struct data_block* data_blk = malloc(sizeof(struct data_block));
@@ -311,12 +311,12 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
                 }
                 PRINTF_FLUSH("成功读取一级索引块内容\n");
                 // 计算存储的数据块的地址个数
-                int addr_num = data_blk->used_size / sizeof(short int);
+                int addr_num = data_blk->used_size / sizeof(short);
                 int pos = 0;
-                short int* data_addr = (short int*) data_blk->data;
+                short* data_addr = (short*) data_blk->data;
                 while (pos < data_blk->used_size)
                 {
-                    short int tmp_data_addr = *data_addr;
+                    short tmp_data_addr = *data_addr;
                     PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
@@ -365,7 +365,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
                         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                     }
                     data_addr++;
-                    pos += sizeof(short int);
+                    pos += sizeof(short);
                     free(tmp_data_blk);
                     free(file_fullnames);
                 }
@@ -418,8 +418,8 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     PRINTF_FLUSH("开始写入文件!\n");
     if (1)
     {
-        short int data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
-        short int* data_blk_id = malloc(data_blk_num * sizeof(short int));
+        short data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
+        short* data_blk_id = malloc(data_blk_num * sizeof(short));
         get_free_data_blk(data_blk_id, data_blk_num, 1);
         size_t remain_size = size;
         size_t write_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
@@ -449,16 +449,16 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
 
     // 检查写入数据大小是否大于当前数据块的当前文件指针位置后面的大小
     // 获得文件指针指向的块号
-    short int blk_num_id = offset / BLOCK_MAX_DATA_SIZE;
-    short int off_real_addr;
-    short int off_real_addr_idx;
+    short blk_num_id = offset / BLOCK_MAX_DATA_SIZE;
+    short off_real_addr;
+    short off_real_addr_idx;
     cal_curaddr_idx_curaddr(blk_num_id, &off_real_addr, &off_real_addr_idx);
     // 根据真实块号得到数据块
     struct data_block* data_blk = malloc(sizeof(struct data_block));
     read_data_block(off_real_addr, data_blk);
     // 检查写入数据大小是否大于当前数据块的当前文件指针位置及后面的大小
     // 得到当前文件指针位置及后面的大小
-    short int later_size = data_blk->used_size - offset;
+    short later_size = data_blk->used_size - offset;
     // ——不是的话，直接覆盖即可
     if (size < later_size)
     {

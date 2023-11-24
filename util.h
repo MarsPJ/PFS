@@ -1,3 +1,6 @@
+
+#pragma pack(1)
+
 #include<unistd.h>
 #include<sys/types.h>
 #include<stdio.h>
@@ -29,10 +32,12 @@
 #define DIR_ENTRY_MAXNUM_PER_BLOCK BLOCK_MAX_DATA_SIZE / DIR_ENTRY_SIZE
 // 最大的文件名或目录名长度
 #define MAX_DIR_FILE_NAME_LEN 8
-// 文件名全名（文件名+扩展名+一个分割.）最大长度
-#define MAX_FILE_FULLNAME_LENGTH 8 + 3 + 1
+// 文件名全名（文件名+扩展名）最大长度,不包括.
+// 创建时，如果有.，其实有效文件全名最大长度是7，但是读取的时候还是按有效文件全名最大长度是8的标准开辟空间读取
+// MAX_FILE_FULLNAME_LENGTH + 2，指的是多预留了.和结尾\0符号
+#define MAX_FILE_FULLNAME_LENGTH 8 + 3
 // 每个索引块能存放的最多的直接地址数
-#define MAX_ADDR_NUM_PER_INDEX_BLOCK BLOCK_SIZE / sizeof(short int) 
+#define MAX_ADDR_NUM_PER_INDEX_BLOCK BLOCK_SIZE / sizeof(short) 
 // 总共的数据块个数（包括索引块）
 #define BLOCK_TOTAL_NUM FILE_SYSTEM_SIZE / BLOCK_SIZE
 // 每个数据块真正能被使用的有效空间
@@ -65,14 +70,14 @@ struct super_block {
 */
 // 存储权限信息以及内容的存储地址
 struct inode { 
-    short int st_mode; /* 权限，2字节 */ 
-    short int st_ino; /* i-node号，2字节 */ 
+    short st_mode; /* 权限，2字节 */ 
+    short st_ino; /* i-node号，2字节 */ 
     char st_nlink; /* 链接数，1字节 */ 
     uid_t st_uid; /* 拥有者的用户 ID ，4字节 */ 
     gid_t st_gid; /* 拥有者的组 ID，4字节  */ 
     off_t st_size; /*文件大小，4字节 */ 
     struct timespec st_atim;/* 16个字节time of last access */ 
-    short int addr[7];    /* 磁盘地址，14字节 */
+    short addr[7];    /* 磁盘地址，14字节 */
 };
 
 // 只有超级块(1)，inode位图区(1)，数据块位图（4），inode区（512）之后的块才会用到（即数据块和索引块）
@@ -81,13 +86,12 @@ struct data_block
     size_t used_size;
     char data[BLOCK_MAX_DATA_SIZE];
 };
-
 // 存储文件名或者目录名，以及inode号
 struct dir_entry
 {
-    char file_name[MAX_DIR_FILE_NAME_LEN + 1];
+    char file_name[8 + 1];
     char extension[3 + 1];
-    short int inode_id;
+    short inode_id;
     char reserved[1];
 };
 
@@ -102,16 +106,6 @@ struct inode root_inode;
     printf(fmt, ##__VA_ARGS__); \
     fflush(stdout); \
 } while (0)
-const char* GetFileExtension(const char* filename) {
-    const char* dot = strrchr(filename, '.'); // 在字符串中查找最后一个点的位置
-    if (dot && dot < filename + strlen(filename) - 1) {
-        // 找到点并且点不在字符串的最后一个位置
-        return dot + 1; // 返回点之后的部分作为后缀名
-    } else {
-        // 没有找到点或者点在字符串的最后一个位置
-        return ""; // 或者可以返回一个默认的后缀名
-    }
-}
 
 // 分割文件名和扩展名
 // 扩展名过长返回-2，否则返回0
@@ -162,8 +156,9 @@ int split_path(const char* origin_path, struct paths* m_paths)
     // 有二级目录，形如：/fada/....
     if (NULL != second_path)
     {
+        // 跳过斜杠
         second_path++;
-        if (strlen(second_path) > MAX_DIR_FILE_NAME_LEN)
+        if (strlen(second_path) > MAX_FILE_FULLNAME_LENGTH)
         {
             PRINTF_FLUSH("%s\n", second_path);
             PRINTF_FLUSH("目录或文件全名过长！\n");
@@ -184,7 +179,7 @@ int split_path(const char* origin_path, struct paths* m_paths)
     // 没有二级目录
     else
     {
-        if (strlen(path_cp) > MAX_DIR_FILE_NAME_LEN)
+        if (strlen(path_cp) > MAX_FILE_FULLNAME_LENGTH)
         {
             PRINTF_FLUSH("目录或文件全名过长！\n");
             return -1;
@@ -242,7 +237,7 @@ int path_is_legal(const char* origin_path, struct paths* m_paths, int type)
 // 根据inodo号或者块号(addr)重置inode位图区或者数据块位图区
 // mode=1表示重置数据块位图区，id即为addr
 // mode=2表示重置inode位图区，id即为inode号
-void recall_inode_or_datablk_id(const short int id, int mode)
+void recall_inode_or_datablk_id(const short id, int mode)
 {
     if (mode == 1)
     {
@@ -255,13 +250,13 @@ void recall_inode_or_datablk_id(const short int id, int mode)
     
     FILE* reader = NULL;
     reader = fopen(disk_path, "r+");
-    short int over_bytes;
-    short int over_bits;
+    short over_bytes;
+    short over_bits;
     long off;
     // 数据块
     if (mode == 1)
     {
-        short int block_bit_map_id = id - m_sb.first_blk;
+        short block_bit_map_id = id - m_sb.first_blk;
         over_bytes = block_bit_map_id / 8;
         over_bits = block_bit_map_id % 8;
         off = m_sb.first_blk_of_databitmap * BLOCK_SIZE + over_bytes;
@@ -300,7 +295,7 @@ void recall_inode_or_datablk_id(const short int id, int mode)
 void recall_data_block(const struct inode cur_inode)
 {
     PRINTF_FLUSH("开始回收数据块!\n");
-    int addr_num = sizeof(cur_inode.addr) / sizeof(short int);
+    int addr_num = sizeof(cur_inode.addr) / sizeof(short);
     PRINTF_FLUSH("addr_num: %d\n", addr_num);
     // 后面只需提供数据块的地址即可回收
     for (int i = 0; i < addr_num; ++i)
@@ -361,7 +356,7 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
     reader = fopen(disk_path, "r+");
     // 更新根目录数据块记录的目录项信息(只需要更新数据块已使用大小)
     // TODO:是否要物理清空对应位置数据
-    short int tmp_addr = parent_inode->addr[tmp_addr_i];
+    short tmp_addr = parent_inode->addr[tmp_addr_i];
     // 紧凑数据块,前面空了就将数据块最后一个目录项拿到前面空位补
     int total_dir_num = data_blk->used_size / sizeof(struct dir_entry);
     // 指向数据块中最后一个数据项的有效地址
@@ -409,7 +404,7 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
 // 不考虑超出最大文件数的情况
 // mode=1表示返回空闲数据块
 // mode=2表示返回空闲inode号
-void get_free_data_blk(short int* ids, int num, int mode)
+void get_free_data_blk(short* ids, int num, int mode)
 {
     FILE* reader = NULL;
     reader = fopen(disk_path, "r+");
@@ -509,7 +504,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     // 创建inode
     struct inode new_inode;
     new_inode.st_mode = 0755;
-    short int* inode_ids = (short int*)malloc(sizeof(short int));
+    short* inode_ids = (short*)malloc(sizeof(short));
     get_free_data_blk(inode_ids, 1, 2);
     new_inode.st_ino = *inode_ids;
     // free(inode_ids);
@@ -560,7 +555,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
             ++count;
         }
     }
-    short int tmp_addr = -1;
+    short tmp_addr = -1;
     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
     // 一定要初始化data部分
     PRINTF_FLUSH("1\n");
@@ -568,7 +563,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     memset(tmp_data_blk->data, '\0', BLOCK_MAX_DATA_SIZE);
     tmp_data_blk->used_size = 0;
     struct dir_entry* new_dir_entry = NULL;
-    short int* data_blk_ids = NULL;
+    short* data_blk_ids = NULL;
     // linux中的inode，对于目录的大小是指dir_entry的大小，不会改变
     // 更新父目录大小信息
     // parent_inode->st_size += sizeof(struct dir_entry);
@@ -577,7 +572,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     {
         PRINTF_FLUSH("父目录从来没有数据，需新建数据块\n");
         // 为父目录申请数据块地址
-        data_blk_ids = (short int*)malloc(sizeof(short int));
+        data_blk_ids = (short*)malloc(sizeof(short));
         get_free_data_blk(data_blk_ids, 1, 1);
         parent_inode->addr[0] = *data_blk_ids;
         off = *data_blk_ids * BLOCK_SIZE;
@@ -698,7 +693,7 @@ void get_sb_info()
 }
 
 // 根据addr（块号）读取块的数据，成功读取返回0，否则返回-1
-int read_data_block(short int addr,struct data_block* data_blk)
+int read_data_block(short addr,struct data_block* data_blk)
 {
     FILE* reader;
     reader = fopen(disk_path, "rb");
@@ -832,7 +827,7 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
                     }
                     if (0 == strcmp(dir_file_name, full_name))
                     {
-                        short int target_inode_id = tmp_dir_entry->inode_id;
+                        short target_inode_id = tmp_dir_entry->inode_id;
                         FILE* reader = NULL;
                         reader = fopen(disk_path, "rb");
                         long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
@@ -851,7 +846,7 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
             else if (i == 4)
             {
                 // 索引块地址
-                short int index_blk_addr = tmp_addr;
+                short index_blk_addr = tmp_addr;
                 // 读出索引块的信息
                 // 申请索引块内存
                 struct data_block* data_blk = malloc(sizeof(struct data_block));
@@ -864,12 +859,12 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
                 }
                 PRINTF_FLUSH("成功读取一级索引块内容\n");
                 // 计算存储的数据块的地址个数
-                int addr_num = data_blk->used_size / sizeof(short int);
+                int addr_num = data_blk->used_size / sizeof(short);
                 int pos = 0;
-                short int* data_addr = (short int*) data_blk->data;
+                short* data_addr = (short*) data_blk->data;
                 while (pos < data_blk->used_size)
                 {
-                    short int tmp_data_addr = *data_addr;
+                    short tmp_data_addr = *data_addr;
                     PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
@@ -918,7 +913,7 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
                         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                     }
                     data_addr++;
-                    pos += sizeof(short int);
+                    pos += sizeof(short);
                     free(tmp_data_blk);
                     free(file_fullnames);
                 }
@@ -945,7 +940,7 @@ int create_file_under_pardir(const char* parent_dir,const char* new_filename, st
     {
         parent_dir_entry++;
     }
-    short int parent_inode_id = parent_dir_entry->inode_id;
+    short parent_inode_id = parent_dir_entry->inode_id;
     // 在父目录下创建文件
     // 先得到父目录的inode
     FILE* reader = NULL;
@@ -977,7 +972,7 @@ int isEmptyDirEntry(struct dir_entry* tmp_dir_entry)
 
 
 // 检查数据块是否已满，已满返回1，否则返回0，读取数据块发生错误返回-1
-static int block_isfull(short int addr)
+static int block_isfull(short addr)
 {
     struct data_block* data_blk = malloc(sizeof(struct data_block));
     int ret = read_data_block(addr, data_blk);
@@ -1135,7 +1130,7 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                     if (0 == strcmp(dir_file_name, full_name))
                     {
                         PRINTF_FLUSH("查找到相同的目录或文件名！\n");
-                        short int target_inode_id = tmp_dir_entry->inode_id;
+                        short target_inode_id = tmp_dir_entry->inode_id;
                         FILE* reader = NULL;
                         reader = fopen(disk_path, "rb");
                         long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
@@ -1170,7 +1165,7 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
             else if (i == 4)
             {
                 // 索引块地址
-                short int index_blk_addr = tmp_addr;
+                short index_blk_addr = tmp_addr;
                 // 读出索引块的信息
                 // 申请索引块内存
                 struct data_block* data_blk = malloc(sizeof(struct data_block));
@@ -1183,12 +1178,12 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                 }
                 PRINTF_FLUSH("成功读取一级索引块内容\n");
                 // 计算存储的数据块的地址个数
-                int addr_num = data_blk->used_size / sizeof(short int);
+                int addr_num = data_blk->used_size / sizeof(short);
                 int pos = 0;
-                short int* data_addr = (short int*) data_blk->data;
+                short* data_addr = (short*) data_blk->data;
                 while (pos < data_blk->used_size)
                 {
-                    short int tmp_data_addr = *data_addr;
+                    short tmp_data_addr = *data_addr;
                     PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
@@ -1237,7 +1232,7 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                     }
                     data_addr++;
-                    pos += sizeof(short int);
+                    pos += sizeof(short);
                     free(tmp_data_blk);
                     free(file_fullnames);
                 }
@@ -1393,7 +1388,7 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
             else if (i == 4)
             {
                 // 索引块地址
-                short int index_blk_addr = tmp_addr;
+                short index_blk_addr = tmp_addr;
                 // 读出索引块的信息
                 // 申请索引块内存
                 struct data_block* data_blk = malloc(sizeof(struct data_block));
@@ -1406,12 +1401,12 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
                 }
                 PRINTF_FLUSH("成功读取一级索引块内容\n");
                 // 计算存储的数据块的地址个数
-                int addr_num = data_blk->used_size / sizeof(short int);
+                int addr_num = data_blk->used_size / sizeof(short);
                 int pos = 0;
-                short int* data_addr = (short int*) data_blk->data;
+                short* data_addr = (short*) data_blk->data;
                 while (pos < data_blk->used_size)
                 {
-                    short int tmp_data_addr = *data_addr;
+                    short tmp_data_addr = *data_addr;
                     PRINTF_FLUSH("读取直接地址的数据\n");
                     // 申请数据块内存
                     struct data_block* tmp_data_blk = malloc(sizeof(struct data_block));
@@ -1457,7 +1452,7 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
                         file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
                     }
                     data_addr++;
-                    pos += sizeof(short int);
+                    pos += sizeof(short);
                     free(file_fullnames);
                     free(tmp_data_blk);
                     free(data_blk);
@@ -1471,7 +1466,7 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
 
 }
 
-int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr)
+int get_valid_addr(short addr[7], short cur_addr_idx, short cur_addr)
 {
     for (int i = cur_addr_idx; i < 7; ++i)
     {
@@ -1491,7 +1486,7 @@ int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr
             {
                 struct data_block* data_blk = malloc(sizeof(struct data_block)); 
                 read_data_block(addr[cur_addr_idx + 1], data_blk);
-                short int* new_addr = (short int*)data_blk->data;
+                short* new_addr = (short*)data_blk->data;
                 return *new_addr;
             }
         }
@@ -1501,13 +1496,13 @@ int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr
             // 先在本一级地址块找现在的地址
             struct data_block* data_blk = malloc(sizeof(struct data_block)); 
             read_data_block(addr[cur_addr_idx], data_blk);
-            short int* p = (short int*)data_blk->data;
+            short* p = (short*)data_blk->data;
             int size = 0;
             while(size < data_blk->used_size)
             {
                 if (cur_addr == *p)
                 {
-                    if (size + sizeof(short int) > data_blk->used_size)
+                    if (size + sizeof(short) > data_blk->used_size)
                     {
                         break;
                     }
@@ -1515,7 +1510,7 @@ int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr
                     return *p;
                 }
                 p++;
-                size += sizeof(short int);
+                size += sizeof(short);
             }
             // 一级间接地址没有剩余的了，找二级间接地址
             if (-1 == addr[cur_addr_idx + 1])
@@ -1528,7 +1523,7 @@ int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr
                 // 拿到二级间接地址块
                 read_data_block(addr[cur_addr_idx + 1], data_blk);
                 // 先拿到一个一级地址块地址
-                short int* new_addr = (short int*)data_blk->data;
+                short* new_addr = (short*)data_blk->data;
 
                 return *new_addr;
             }
@@ -1547,7 +1542,7 @@ int get_valid_addr(short int addr[7], short int cur_addr_idx, short int cur_addr
     }
 }
 // 根据从0标号的块地址转为实际块地址，一级addr中的idx
-void cal_curaddr_idx_curaddr(short int blk_num_id, short int* curaddr, short int* curaddr_idx)
+void cal_curaddr_idx_curaddr(short blk_num_id, short* curaddr, short* curaddr_idx)
 {
     if (blk_num_id <= 3)
     {
