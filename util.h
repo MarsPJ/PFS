@@ -487,6 +487,179 @@ void get_free_data_blk(short* ids, int num, int mode)
         PRINTF_FLUSH("申请得到少于预期的%d个空闲块或inode号\n", count_ids);
     }
 }
+// 根据addr（块号）读取块的数据，成功读取返回0，否则返回-1
+int read_data_block(short addr,struct data_block* data_blk)
+{
+    FILE* reader;
+    reader = fopen(disk_path, "rb");
+    if (NULL == reader)
+    {
+        PRINTF_FLUSH("read_data_block中diskimg打开失败！\n");
+        perror("Error");
+        return -1;
+    }
+    PRINTF_FLUSH("正在读取数据块...\n");
+    fseek(reader, addr * BLOCK_SIZE, SEEK_SET);
+    fread(data_blk, sizeof(struct data_block), 1, reader);
+    PRINTF_FLUSH("读取数据块的块地址为: %hd, 已使用大小为: %zu\n", addr, data_blk->used_size);
+    fclose(reader);
+    return 0;
+}
+
+// 根据当前addr在addr[7]中的idx和addr，得到下一个addr以及addr的idx，如果没有下一个有效地址，则next_addr和next_addr_idx都会被置为-1
+
+// target_data_blk表示读取下一个地址的所在索引块的信息，如果下一个地址是直接地址或者当前索引块已经装满，则置为NULL，并
+
+void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx,
+ struct data_block* parent_data_blk, struct data_block* grandfather_data_blk)
+{
+    short cur_addr_idx = *next_addr_idx;
+    short cur_addr = *next_addr;
+    for (int i = cur_addr_idx; i < 7; ++i)
+    {
+        // 下一个是直接地址
+        if (i <= 2)
+        {
+            *next_addr =  addr[cur_addr_idx + 1];
+            *next_addr_idx = cur_addr_idx + 1;
+            return;
+        }
+        // 直接地址用完或读完了，下一个是一级间接地址
+        else if (cur_addr_idx == 3)
+        {
+            // 下一个一级间接地址还没开辟
+            if (-1 == addr[cur_addr_idx + 1])
+            {
+                *next_addr = -1;
+                *next_addr_idx = cur_addr_idx + 1;
+                
+                return;
+            }
+            else
+            {
+                struct data_block* data_blk = malloc(sizeof(struct data_block));
+                read_data_block(addr[cur_addr_idx + 1], data_blk);
+                short* new_addr = (short*)data_blk->data;
+                *next_addr = *new_addr;
+                *next_addr_idx = cur_addr_idx + 1;
+                parent_data_blk = data_blk;
+                return;
+            }
+        }
+        // 下一个是二级间接地址
+        else if (cur_addr_idx == 4)
+        {
+            // 先在本一级地址块找现在的地址，并看看一级地址读完或者用完没有
+            struct data_block* data_blk = malloc(sizeof(struct data_block)); 
+            read_data_block(addr[cur_addr_idx], data_blk);
+            parent_data_blk = data_blk;
+            short* p = (short*)data_blk->data;
+            int size = 0;
+            while(size < data_blk->used_size)
+            {
+                if (cur_addr == *p)
+                {
+                    // 一级地址读完或者用完了
+                    if (size + sizeof(short) > data_blk->used_size)
+                    {
+                        break;
+                    }
+                    // 一级地址没读完或没用完
+                    p++;
+                    *next_addr = *p;
+                    *next_addr_idx = cur_addr_idx;
+                    return;
+                }
+                p++;
+                size += sizeof(short);
+            }
+            // 一级间接地址没有剩余的了，找二级间接地址
+            if (-1 == addr[cur_addr_idx + 1])
+            {
+
+                *next_addr = -1;
+                *next_addr_idx = -1;
+                return;
+            }
+            else
+            {
+                struct data_block* data_blk = malloc(sizeof(struct data_block));
+                // 拿到二级间接地址块
+                read_data_block(addr[cur_addr_idx + 1], data_blk);
+                grandfather_data_blk = data_blk;
+                // 先拿到一个一级地址块地址
+                short* new_addr = (short*)data_blk->data;
+
+                *next_addr = *new_addr;
+                *next_addr_idx = cur_addr_idx + 1;
+                return;
+            }
+        }
+        // 下一个是三级间接地址
+        else if (cur_addr_idx == 5)
+        {
+
+        }
+        // 超出范围
+        else
+        {
+
+        }
+
+    }
+}
+
+
+// flag = 1 表示只是读数据块，flag = 2 表示如果用完数据块要重新申请数据块并更新addr数组信息
+void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag)
+{
+    struct data_block* direct_data_blk = NULL;
+    struct data_block* parent_data_blk = NULL;
+    struct data_block* grandfather_data_blk = NULL;
+    get_valid_addr(addr, next_addr, next_addr_idx, parent_data_blk, grandfather_data_blk);
+    if (flag == 1)
+    {
+        return;
+    }
+    // 如果parent_data_blk和grandfather_data_blk都为NULL，表示没有索引块
+    if (parent_data_blk == NULL && grandfather_data_blk == NULL)
+    {
+        // 下一个是直接地址
+        if (*next_addr_idx <= 3)
+        {
+            short* blk_id = malloc(sizeof(short));
+            // 申请空闲数据块
+            get_free_data_blk(blk_id, 1, 1);
+            // 更新addr数组
+            addr[*next_addr_idx] = *blk_id;
+        }
+        // 下一个是一级索引
+        else
+        {
+            short* blk_id = malloc(sizeof(short) * 2);
+            // 申请空闲数据块作为数据块和索引块
+            get_free_data_blk(blk_id, 2, 1);
+            struct data_block* data_blk = malloc(sizeof(struct data_block));
+
+            // 先读出索引块内容
+            read_data_block(blk_id[0], data_blk);
+            // 初始化
+            data_blk->used_size = sizeof(short);
+            // 将数据块地址写入索引块地址
+            short* direct_addr = (short*)data_blk->data;
+            *direct_addr = blk_id[1];
+            FILE* reader = NULL;
+            reader = fopen(disk_path, "r+");
+            fseek(reader, blk_id[0] * BLOCK_SIZE, SEEK_SET);
+            fwrite(data_blk, sizeof(struct data_block), 1, reader);
+            fclose(reader);
+            // 更新addr数组
+            addr[*next_addr_idx] = blk_id[0];
+        }
+
+    }
+
+}
 
 // type=1 表示创建目录
 // type=2 表示创建文件
@@ -542,7 +715,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
      * */ 
 
     // 记录地址不为-1的最大位置
-    int count = -1;
+    short count = -1;
     for (int i = 0; i< 7; ++i)
     {
         // PRINTF_FLUSH("i: %d\n", i);
@@ -598,7 +771,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
         {
             PRINTF_FLUSH("当前有效块已满，需要新建块\n");
             // 申请可用地址addr以及更新addr数组
-            update_addr(parent_inode->addr, tmp_addr, count, 2);
+            update_addr(parent_inode->addr, &tmp_addr, &count, 2);
             read_data_block(tmp_addr, tmp_data_blk);
             // 指向等下要把数据重新写回数据块的位置
             off = tmp_addr * BLOCK_SIZE;
@@ -669,24 +842,6 @@ void get_sb_info()
     PRINTF_FLUSH("get_sb_info end\n");
 }
 
-// 根据addr（块号）读取块的数据，成功读取返回0，否则返回-1
-int read_data_block(short addr,struct data_block* data_blk)
-{
-    FILE* reader;
-    reader = fopen(disk_path, "rb");
-    if (NULL == reader)
-    {
-        PRINTF_FLUSH("read_data_block中diskimg打开失败！\n");
-        perror("Error");
-        return -1;
-    }
-    PRINTF_FLUSH("正在读取数据块...\n");
-    fseek(reader, addr * BLOCK_SIZE, SEEK_SET);
-    fread(data_blk, sizeof(struct data_block), 1, reader);
-    PRINTF_FLUSH("读取数据块的块地址为: %hd, 已使用大小为: %zu\n", addr, data_blk->used_size);
-    fclose(reader);
-    return 0;
-}
 
 
 int get_root_inode(struct inode* tmp_node)
@@ -1291,158 +1446,6 @@ int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, 
     }
     return 0;
 }
-// 根据当前addr在addr[7]中的idx和addr，得到下一个addr以及addr的idx，如果没有下一个有效地址，则next_addr和next_addr_idx都会被置为-1
-
-// target_data_blk表示读取下一个地址的所在索引块的信息，如果下一个地址是直接地址或者当前索引块已经装满，则置为NULL，并
-
-void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx,
- struct data_block* parent_data_blk, struct data_block* grandfather_data_blk)
-{
-    short cur_addr_idx = *next_addr_idx;
-    short cur_addr = *next_addr;
-    for (int i = cur_addr_idx; i < 7; ++i)
-    {
-        // 下一个是直接地址
-        if (i <= 2)
-        {
-            *next_addr =  addr[cur_addr_idx + 1];
-            *next_addr_idx = cur_addr_idx + 1;
-            return;
-        }
-        // 直接地址用完或读完了，下一个是一级间接地址
-        else if (cur_addr_idx == 3)
-        {
-            // 下一个一级间接地址还没开辟
-            if (-1 == addr[cur_addr_idx + 1])
-            {
-                *next_addr = -1;
-                *next_addr_idx = cur_addr_idx + 1;
-                
-                return;
-            }
-            else
-            {
-                struct data_block* data_blk = malloc(sizeof(struct data_block));
-                read_data_block(addr[cur_addr_idx + 1], data_blk);
-                short* new_addr = (short*)data_blk->data;
-                *next_addr = *new_addr;
-                *next_addr_idx = cur_addr_idx + 1;
-                parent_data_blk = data_blk;
-                return;
-            }
-        }
-        // 下一个是二级间接地址
-        else if (cur_addr_idx == 4)
-        {
-            // 先在本一级地址块找现在的地址，并看看一级地址读完或者用完没有
-            struct data_block* data_blk = malloc(sizeof(struct data_block)); 
-            read_data_block(addr[cur_addr_idx], data_blk);
-            parent_data_blk = data_blk;
-            short* p = (short*)data_blk->data;
-            int size = 0;
-            while(size < data_blk->used_size)
-            {
-                if (cur_addr == *p)
-                {
-                    // 一级地址读完或者用完了
-                    if (size + sizeof(short) > data_blk->used_size)
-                    {
-                        break;
-                    }
-                    // 一级地址没读完或没用完
-                    p++;
-                    *next_addr = *p;
-                    *next_addr_idx = cur_addr_idx;
-                    return;
-                }
-                p++;
-                size += sizeof(short);
-            }
-            // 一级间接地址没有剩余的了，找二级间接地址
-            if (-1 == addr[cur_addr_idx + 1])
-            {
-
-                *next_addr = -1;
-                *next_addr_idx = -1;
-                return;
-            }
-            else
-            {
-                struct data_block* data_blk = malloc(sizeof(struct data_block));
-                // 拿到二级间接地址块
-                read_data_block(addr[cur_addr_idx + 1], data_blk);
-                grandfather_data_blk = data_blk;
-                // 先拿到一个一级地址块地址
-                short* new_addr = (short*)data_blk->data;
-
-                *next_addr = *new_addr;
-                *next_addr_idx = cur_addr_idx + 1;
-                return;
-            }
-        }
-        // 下一个是三级间接地址
-        else if (cur_addr_idx == 5)
-        {
-
-        }
-        // 超出范围
-        else
-        {
-
-        }
-
-    }
-}
-// flag = 1 表示只是读数据块，flag = 2 表示如果用完数据块要重新申请数据块并更新addr数组信息
-void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag)
-{
-    struct data_block* direct_data_blk = NULL;
-    struct data_block* parent_data_blk = NULL;
-    struct data_block* grandfather_data_blk = NULL;
-    get_valid_addr(addr[7], next_addr, next_addr_idx, parent_data_blk, grandfather_data_blk);
-    if (flag == 1)
-    {
-        return;
-    }
-    // 如果parent_data_blk和grandfather_data_blk都为NULL，表示没有索引块
-    if (parent_data_blk == NULL && grandfather_data_blk == NULL)
-    {
-        // 下一个是直接地址
-        if (next_addr_idx <= 3)
-        {
-            short* blk_id = malloc(sizeof(short));
-            // 申请空闲数据块
-            get_free_data_blk(blk_id, 1, 1);
-            // 更新addr数组
-            addr[*next_addr_idx] = blk_id;
-        }
-        // 下一个是一级索引
-        else
-        {
-            short* blk_id = malloc(sizeof(short) * 2);
-            // 申请空闲数据块作为数据块和索引块
-            get_free_data_blk(blk_id, 2, 1);
-            struct data_block* data_blk = malloc(sizeof(struct data_block));
-
-            // 先读出索引块内容
-            read_data_block(blk_id[0], data_blk);
-            // 初始化
-            data_blk->used_size = sizeof(short);
-            // 将数据块地址写入索引块地址
-            short* direct_addr = (short*)data_blk->data;
-            *direct_addr = blk_id[1];
-            FILE* reader = NULL;
-            reader = fopen(disk_path, "r+");
-            fseek(reader, blk_id[0] * BLOCK_SIZE, SEEK_SET);
-            fwrite(data_blk, sizeof(struct data_block), 1, reader);
-            fclose(reader);
-            // 更新addr数组
-            addr[*next_addr_idx] = blk_id[0];
-        }
-
-    }
-
-}
 
 // 根据目录inode，将目录的所有目录项装填进buf
 int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* filler, void *buf)
@@ -1496,7 +1499,7 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
             file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
         }
 
-        update_addr(par_parent_inode->addr, &cur_addr, &cur_addr_idx);
+        update_addr(par_parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
     }
     PRINTF_FLUSH("装填filler完毕\n");
 }
