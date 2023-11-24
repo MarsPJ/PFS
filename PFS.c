@@ -53,15 +53,13 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     stbuf->st_ino = targe_inode->st_ino;
     PRINTF_FLUSH("新的inode号为: %lu\n", stbuf->st_ino);
     stbuf->st_mode = targe_inode->st_mode | stbuf->st_mode;
-    PRINTF_FLUSH("1\n");
-    PRINTF_FLUSH("File mode: %08x\n", stbuf->st_mode);
     stbuf->st_nlink = targe_inode->st_nlink;
     stbuf->st_uid = targe_inode->st_uid;
     stbuf->st_gid = targe_inode->st_gid;
     stbuf->st_size = targe_inode->st_size;
     stbuf->st_atime = targe_inode->st_atim.tv_sec;
     stbuf->st_blocks = m_sb.first_inode + targe_inode->st_ino - 1;
-    PRINTF_FLUSH("成功找到ssfddafsss%s\n", m_paths.new_dir_file_fullname);
+    PRINTF_FLUSH("成功找到%s\n", m_paths.new_dir_file_fullname);
 
     if (1) {
         // 提取文件类型
@@ -173,11 +171,15 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     memset(p, '\0', sizeof(struct paths));
     int ret = path_is_legal(path, &m_paths, 2);
     PRINTF_FLUSH("路径解析结果：%d\n", ret);
-    if (0 != ret)
+    if (-ENAMETOOLONG == ret)
     {
         return ret;
     }
-    // TODO:判断是不是目录
+    else if (-EPERM == ret )
+    {
+        return -EISDIR;
+    }
+
 
     struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
     ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
@@ -186,6 +188,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     {
         return ret;
     }
+    // TODO:判断是不是目录
     // 拿到文件inode
     // 检查文件指针是否超出文件大小范围
     off_t file_size = target_inode->st_size;
@@ -387,11 +390,14 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     memset(p, '\0', sizeof(struct paths));
     int ret = path_is_legal(path, &m_paths, 2);
     PRINTF_FLUSH("路径解析结果：%d\n", ret);
-    if (0 != ret)
+    if (-ENAMETOOLONG == ret)
     {
         return ret;
     }
-    // TODO:判断是不是目录
+    else if (-EPERM == ret )
+    {
+        return -EISDIR;
+    }
 
     struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
     ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
@@ -410,7 +416,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     }
     // 如果文件大小为0,只需要直接创建数据块即可(由于offset<=file_size,因此此时offset也为0)
     PRINTF_FLUSH("开始写入文件!\n");
-    if (file_size == 0)
+    if (1)
     {
         short int data_blk_num = ceil((double)size / (double)BLOCK_SIZE);
         short int* data_blk_id = malloc(data_blk_num * sizeof(short int));
@@ -433,7 +439,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
         PRINTF_FLUSH("data: %s\n", buf);
         PRINTF_FLUSH("成功写入了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
         // 更新inode
-        target_inode->st_size += size;
+        target_inode->st_size = size;
         
         // 更新inode到文件系统
         write_inode(target_inode);
