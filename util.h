@@ -1033,6 +1033,25 @@ static int block_isfull(short addr)
     }
 }
 
+int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, struct inode* par_parent_inode, struct inode* target_inode)
+{
+    PRINTF_FLUSH("第一次查找父目录：%s\n", parent_dir);
+    struct inode* parent_inode = (struct inode*)malloc(sizeof(struct inode));
+    int ret = return_inode_check(parent_dir, par_parent_inode, parent_inode);
+    if (ret != 0)
+    {
+        return ret;
+    }
+    PRINTF_FLUSH("第二次查找文件：%s\n", dir_file_name);
+    ret = return_inode_check(dir_file_name, parent_inode, target_inode);
+
+    // 申请文件全名内存
+    if (ret != 0)
+    {
+        return ret;
+    }
+    return 0;
+}
 
 // type=1表示目录，type=2表示文件
 static int create_dir_or_file (const char *path, mode_t mode, int type)
@@ -1081,11 +1100,16 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
     // 如果是创建文件，检查根目录下是否有父目录
     else
     {
-        ret = return_inode_check(m_paths.parent_dir, &root_inode, target_inode);
+        
+        ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
         // 父目录不存在或有其他错误
-        if (0 != ret)
+        if (0 != ret && ret != -ENOENT)
         {
             return ret;
+        }
+        else if (0 == ret)
+        {
+            return -EEXIST;
         }
         PRINTF_FLUSH("准备创建文件\n");
         // 如果是创建文件，说明可以创建，在父目录下创建
@@ -1331,25 +1355,6 @@ static int remove_dir_or_file (const char *path, int type)
 
 
 
-int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, struct inode* par_parent_inode, struct inode* target_inode)
-{
-    PRINTF_FLUSH("第一次查找父目录：%s\n", parent_dir);
-    struct inode* parent_inode = (struct inode*)malloc(sizeof(struct inode));
-    int ret = return_inode_check(parent_dir, par_parent_inode, parent_inode);
-    if (ret != 0)
-    {
-        return ret;
-    }
-    PRINTF_FLUSH("第二次查找文件：%s\n", dir_file_name);
-    ret = return_inode_check(dir_file_name, parent_inode, target_inode);
-
-    // 申请文件全名内存
-    if (ret != 0)
-    {
-        return ret;
-    }
-    return 0;
-}
 
 // 根据目录inode，将目录的所有目录项装填进buf
 int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* filler, void *buf)
