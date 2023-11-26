@@ -1,7 +1,7 @@
 
 #pragma pack(1)
 // 强制编译器以紧凑的方式排列结构体的成员，不考虑默认的对齐规则，使得struct dir_entry为16B而不进行填充
-
+#define FUSE_USE_VERSION 31
 #include<unistd.h>
 #include<sys/types.h>
 #include<stdio.h>
@@ -9,7 +9,6 @@
 #include<sys/stat.h>
 #include<errno.h>
 #include<time.h>
-#define FUSE_USE_VERSION 31
 #include<sys/types.h>
 #include<fuse3/fuse.h>
 #include<string.h>
