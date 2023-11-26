@@ -663,6 +663,21 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
     get_valid_addr(addr, next_addr, next_addr_idx, parent_data_blk, grandfather_data_blk);
     if (flag == 1)
     {
+        if (direct_data_blk != NULL)
+        {
+            free(direct_data_blk);
+            direct_data_blk = NULL;
+        }
+        if (parent_data_blk != NULL)
+        {
+            free(parent_data_blk);
+            parent_data_blk = NULL;
+        }
+        if (grandfather_data_blk != NULL)
+        {
+            free(grandfather_data_blk);
+            grandfather_data_blk = NULL;
+        }
         return;
     }
     // 如果parent_data_blk和grandfather_data_blk都为NULL，表示没有索引块
@@ -671,12 +686,12 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
         // 下一个是直接地址
         if (*next_addr_idx <= 3)
         {
-            short* blk_id = malloc(sizeof(short));
+            short blk_id;
             // 申请空闲数据块
-            get_free_data_blk(blk_id, 1, 1);
+            get_free_data_blk(&blk_id, 1, 1);
             // 更新addr数组
-            *next_addr = *blk_id;
-            addr[*next_addr_idx] = *blk_id;
+            *next_addr = blk_id;
+            addr[*next_addr_idx] = blk_id;
         }
         // 下一个是一级索引
         else
@@ -699,6 +714,8 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
             fwrite(data_blk, sizeof(struct data_block), 1, file_des);
             // 更新addr数组
             addr[*next_addr_idx] = blk_id[0];
+            free(blk_id);
+            blk_id = NULL;
         }
 
     }
@@ -725,7 +742,21 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
         }
 
     }
-
+    if (direct_data_blk != NULL)
+    {
+        free(direct_data_blk);
+        direct_data_blk = NULL;
+    }
+    if (parent_data_blk != NULL)
+    {
+        free(parent_data_blk);
+        parent_data_blk = NULL;
+    }
+    if (grandfather_data_blk != NULL)
+    {
+        free(grandfather_data_blk);
+        grandfather_data_blk = NULL;
+    }
 }
 
 // type=1 表示创建目录
@@ -744,10 +775,9 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     // 创建inode
     struct inode new_inode;
     new_inode.st_mode = 0755;
-    short* inode_ids = (short*)malloc(sizeof(short));
-    get_free_data_blk(inode_ids, 1, 2);
-    new_inode.st_ino = *inode_ids;
-    // free(inode_ids);
+    short inode_ids;
+    get_free_data_blk(&inode_ids, 1, 2);
+    new_inode.st_ino = inode_ids;
     PRINTF_FLUSH("新建目录的inode值为：%hd\n", new_inode.st_ino);
     new_inode.st_nlink = 1;
     new_inode.st_uid = 0;
@@ -801,7 +831,7 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     memset(tmp_data_blk->data, '\0', BLOCK_MAX_DATA_SIZE);
     tmp_data_blk->used_size = 0;
     struct dir_entry* new_dir_entry = NULL;
-    short* data_blk_ids = NULL;
+    
     // linux中的inode，对于目录的大小是指dir_entry的大小，不会改变
     // 更新父目录大小信息
     // parent_inode->st_size += sizeof(struct dir_entry);
@@ -810,10 +840,10 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     {
         PRINTF_FLUSH("父目录从来没有数据，需新建数据块\n");
         // 为父目录申请数据块地址
-        data_blk_ids = (short*)malloc(sizeof(short));
-        get_free_data_blk(data_blk_ids, 1, 1);
-        parent_inode->addr[0] = *data_blk_ids;
-        off = *data_blk_ids * BLOCK_SIZE;
+        short data_blk_ids;
+        get_free_data_blk(&data_blk_ids, 1, 1);
+        parent_inode->addr[0] = data_blk_ids;
+        off = data_blk_ids * BLOCK_SIZE;
         // 更新当前数据块已使用大小和数据信息
         new_dir_entry = (struct dir_entry*) tmp_data_blk->data;
     }
@@ -973,15 +1003,17 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
     short cur_addr = -1;
     update_addr(parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
     int count = 0;
+    struct data_block* data_blk = malloc(sizeof(struct data_block));
     while (-1 != cur_addr)
     {
         // 申请数据块内存
-        struct data_block* data_blk = malloc(sizeof(struct data_block));
+        
         // 读取数据块数据
         int ret = read_data_block(cur_addr, data_blk);
         if (ret < 0)
         {
-            target_inode = NULL;
+            free(data_blk);
+            data_blk = NULL;
             return -1;
         }
         PRINTF_FLUSH("成功读取数据块内容\n");
@@ -1009,6 +1041,7 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
                 fseek(file_des, off, SEEK_SET);
                 fread(target_inode, sizeof(struct inode), 1, file_des);
                 free(data_blk);
+                data_blk = NULL;
                 return 0;
 
             }
@@ -1017,8 +1050,8 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
         }
         update_addr(parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
     }
-    
-    target_inode = NULL;
+    free(data_blk);
+    data_blk = NULL;
     return -ENOENT;
 }
 
@@ -1047,49 +1080,6 @@ int create_file_under_pardir(const char* parent_dir,const char* new_filename, st
     return real_create_dir_or_file(&parent_inode, mode, type, new_filename);
 }
 
-int isEmptyDirEntry(struct dir_entry* tmp_dir_entry)
-{
-    PRINTF_FLUSH("%s, %d, %s, %s\n", tmp_dir_entry->file_name, tmp_dir_entry->inode_id, tmp_dir_entry->extension, tmp_dir_entry->type);
-    if (strcmp(tmp_dir_entry->file_name, "") == 0 && 
-        tmp_dir_entry->inode_id == 0 &&
-        strcmp(tmp_dir_entry->extension, "") == 0 &&
-        strcmp(tmp_dir_entry->type, "") == 0)
-    {
-        return 1;
-    }
-    else
-    {
-        return 0;
-    }
-}
-
-
-// 检查数据块是否已满，已满返回1，否则返回0，读取数据块发生错误返回-1
-static int block_isfull(short addr)
-{
-    struct data_block* data_blk = malloc(sizeof(struct data_block));
-    int ret = read_data_block(addr, data_blk);
-    if (ret != -1)
-    {
-        if (BLOCK_MAX_DATA_SIZE <= data_blk->used_size)
-        {
-            PRINTF_FLUSH("数据块%hd已满！\n", addr);
-            free(data_blk);
-            return 1;
-        }
-        else
-        {
-            free(data_blk);
-            return 0;
-        }
-    }
-    else{
-        PRINTF_FLUSH("读取数据块出错！\n");
-        free(data_blk);
-        return -1;
-    }
-}
-
 int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, struct inode* par_parent_inode, struct inode* target_inode)
 {
     PRINTF_FLUSH("第一次查找父目录：%s\n", parent_dir);
@@ -1097,6 +1087,8 @@ int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, 
     int ret = return_inode_check(parent_dir, par_parent_inode, parent_inode);
     if (ret != 0)
     {
+        free(parent_inode);
+        parent_inode = NULL;
         return ret;
     }
     PRINTF_FLUSH("第二次查找文件：%s\n", dir_file_name);
@@ -1105,8 +1097,12 @@ int return_inode_2path_check(const char* parent_dir, const char* dir_file_name, 
     // 申请文件全名内存
     if (ret != 0)
     {
+        free(parent_inode);
+        parent_inode = NULL;
         return ret;
     }
+    free(parent_inode);
+    parent_inode = NULL;
     return 0;
 }
 
@@ -1142,16 +1138,22 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         // 目录已存在
         if (0 == ret)
         {
+            free(target_inode);
+            target_inode = NULL;
             return -EEXIST;
         }
         // 其他错误
         else if (ret != -ENOENT)
         {
             PRINTF_FLUSH("其他错误！%d!=%d\n", ret, -EPERM);
+            free(target_inode);
+            target_inode = NULL;
             return ret;
         }
         PRINTF_FLUSH("准备创建目录\n");
         // 如果是创建目录，说明可以创建，在根目录下创建
+        free(target_inode);
+        target_inode = NULL;
         return real_create_dir_or_file(&root_inode, mode, 1, m_paths.new_dir_file_fullname);
     }
     // 如果是创建文件，检查根目录下是否有父目录
@@ -1162,23 +1164,39 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         // 父目录不存在或有其他错误
         if (0 != ret)
         {
+            free(target_inode);
+            target_inode = NULL;
+            free(parent_inode);
+            parent_inode = NULL;
             return ret;
         }
         // 父目录存在，检查文件是否存在
         ret = return_inode_check(m_paths.new_dir_file_fullname, parent_inode, target_inode);
         if (ret !=0 && ret != -ENOENT)
         {
+            free(target_inode);
+            target_inode = NULL;
+            free(parent_inode);
+            parent_inode = NULL;
             return ret;
         }
         if (ret == 0)
         {
+            free(target_inode);
+            target_inode = NULL;
+            free(parent_inode);
+            parent_inode = NULL;
             return -EEXIST;
         }
         PRINTF_FLUSH("准备创建文件\n");
         // 如果是创建文件，说明可以创建，在父目录下创建
         PRINTF_FLUSH("父目录inode为：%hd\n", parent_inode->st_ino);
-        return real_create_dir_or_file(parent_inode, mode, 2, m_paths.new_dir_file_fullname);
-
+        free(target_inode);
+        target_inode = NULL;
+        int ret = real_create_dir_or_file(parent_inode, mode, 2, m_paths.new_dir_file_fullname);
+        free(parent_inode);
+        parent_inode = NULL;
+        return ret;
     }
 
 }
@@ -1192,14 +1210,17 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
     short cur_addr = -1;
     update_addr(parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
     int count = 0;
+    struct data_block* data_blk = malloc(sizeof(struct data_block));
     while (-1 != cur_addr)
     {
         // 申请数据块内存
-        struct data_block* data_blk = malloc(sizeof(struct data_block));
+
         // 读取数据块数据
         int ret = read_data_block(cur_addr, data_blk);
         if (ret < 0)
         {
+            free(data_blk);
+            data_blk = NULL;
             return -1;
         }
         PRINTF_FLUSH("成功读取数据块内容\n");
@@ -1230,6 +1251,8 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
             {
                 if (1 == type)
                 {
+                    free(data_blk);
+                    data_blk = NULL;
                     return -ENOTDIR;
                 }
                 strcat(full_name, ".");
@@ -1248,6 +1271,8 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                 PRINTF_FLUSH("tmp_inode: %hd\ntmp_inode.addr[0]: %hd\n", tmp_inode.st_ino, tmp_inode.addr[0]);
                 if (type == 1 && -1 != tmp_inode.addr[0])
                 {
+                    free(data_blk);
+                    data_blk = NULL;
                     return -ENOTEMPTY;
                 }
                 // 更新父目录(根目录)信息
@@ -1260,6 +1285,7 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
                 // 回收要删除的目录自己的数据块
                 recall_data_block(tmp_inode);
                 free(data_blk);
+                data_blk = NULL;
                 PRINTF_FLUSH("成功删除目录或文件!\n");
                 return 0;
             }
@@ -1268,6 +1294,8 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
         }
         update_addr(parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
     }
+    free(data_blk);
+    data_blk = NULL;
     return -ENOENT;
 }
 
@@ -1308,11 +1336,21 @@ static int remove_dir_or_file (const char *path, int type)
             ret = return_inode_check(m_paths.parent_dir, &root_inode, parent_inode);
             if (ret != 0)
             {
+                free(parent_inode);
+                parent_inode = NULL;
                 return ret;
             }
         }
         PRINTF_FLUSH("通过父目录检查\n");
-        return remove_help(m_paths.new_dir_file_fullname, parent_inode, type);
+
+        ret = remove_help(m_paths.new_dir_file_fullname, parent_inode, type);
+        if (&root_inode != parent_inode)
+        {
+            free(parent_inode);
+            parent_inode = NULL;
+        }
+
+        return ret;
    
     }
 
@@ -1330,16 +1368,19 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
     short cur_addr_idx = -1;
     short cur_addr = -1;
     update_addr(par_parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
+    struct data_block* data_blk = malloc(sizeof(struct data_block));
 
     int count = 0;
     while (-1 != cur_addr)
     {
         // 申请数据块内存
-        struct data_block* data_blk = malloc(sizeof(struct data_block));
+
         // 读取数据块数据
         int ret = read_data_block(cur_addr, data_blk);
         if (ret < 0)
         {
+            free(data_blk);
+            data_blk = NULL;
             return -1;
         }
         PRINTF_FLUSH("成功读取数据块内容\n");
@@ -1352,10 +1393,15 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
         int file_fullname_num = getFileFullNameByDataBlock(file_fullnames, data_blk);
         if (file_fullname_num < 0)
         {
+            free(data_blk);
+            data_blk = NULL;
+            free(file_fullnames);
+            file_fullnames = NULL;
             return -1;
         }
         PRINTF_FLUSH("数据块存储的文件名个数为%d\n", dir_num);
         PRINTF_FLUSH("以下是数据块中的文件名：\n");
+        char* p = file_fullnames;
         for (int i = 0; i < file_fullname_num; ++i)
         {
             char fullname[MAX_FILE_FULLNAME_LENGTH + 2];
@@ -1372,10 +1418,14 @@ int return_full_name_check(struct inode* par_parent_inode, fuse_fill_dir_t* fill
             }
             file_fullnames += MAX_FILE_FULLNAME_LENGTH + 2;
         }
-
         update_addr(par_parent_inode->addr, &cur_addr, &cur_addr_idx, 1);
+        free(p);
+        p = NULL;
     }
+
     PRINTF_FLUSH("装填filler完毕\n");
+    free(data_blk);
+    data_blk = NULL;
 
 }
 

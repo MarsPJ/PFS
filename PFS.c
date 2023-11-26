@@ -4,7 +4,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
 {
     PRINTF_FLUSH("pzj_getattr begin\n");
     PRINTF_FLUSH("getattr	 path : %s \n", path);
-    struct inode* targe_inode = (struct inode*)malloc(sizeof(struct inode));
+    struct inode* targe_inode = NULL;
     struct paths m_paths;
     if (strcmp("/", path) == 0) {
         targe_inode = &root_inode;
@@ -12,6 +12,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     }
     else 
     {
+        targe_inode = (struct inode*)malloc(sizeof(struct inode));
         char* p = (char*)&m_paths;
         memset(p, '\0', sizeof(struct paths));
         int ret = split_path(path, &m_paths);
@@ -20,11 +21,15 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         if (-1 == ret)
         {
             PRINTF_FLUSH("新建的文件或目录长度过长！\n");
+            free(targe_inode);
+            targe_inode = NULL;
             return -ENAMETOOLONG;
         }
         else if (-2 == ret)
         {
             PRINTF_FLUSH("新建的文件扩展名长度过长！\n");
+            free(targe_inode);
+            targe_inode = NULL;
             return -ENAMETOOLONG;
         }
         
@@ -36,6 +41,8 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
             int ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
+                free(targe_inode);
+                targe_inode = NULL;
                 return ret;
             }
         }
@@ -45,6 +52,8 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
             int ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
+                free(targe_inode);
+                targe_inode = NULL;
                 return ret;
             }
         }
@@ -61,24 +70,30 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     stbuf->st_blocks = m_sb.first_inode + targe_inode->st_ino - 1;
     PRINTF_FLUSH("成功找到%s\n", m_paths.new_dir_file_fullname);
 
-    if (1) {
-        // 提取文件类型
-        if (S_ISREG(stbuf->st_mode)) {
-            printf("Regular file\n");
-        } else if (S_ISDIR(stbuf->st_mode)) {
-            printf("Directory\n");
-        } else if (S_ISLNK(stbuf->st_mode)) {
-            printf("Symbolic link\n");
-        } else {
-            printf("Other type\n");
-        }
+    // if (1) {
+    //     // 提取文件类型
+    //     if (S_ISREG(stbuf->st_mode)) {
+    //         printf("Regular file\n");
+    //     } else if (S_ISDIR(stbuf->st_mode)) {
+    //         printf("Directory\n");
+    //     } else if (S_ISLNK(stbuf->st_mode)) {
+    //         printf("Symbolic link\n");
+    //     } else {
+    //         printf("Other type\n");
+    //     }
 
-        // 提取文件权限
-        mode_t file_permissions = stbuf->st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
-        printf("File permissions: %o\n", file_permissions);
-    } else {
-        perror("stat");
+    //     // 提取文件权限
+    //     mode_t file_permissions = stbuf->st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+    //     printf("File permissions: %o\n", file_permissions);
+    // } else {
+    //     perror("stat");
+    // }
+    if (&root_inode != targe_inode)
+    {
+        free(targe_inode);
+        targe_inode = NULL;
     }
+
     return 0;
 }
 
@@ -118,10 +133,14 @@ int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
         PRINTF_FLUSH("父目录查找结果：%d\n", ret);
         if (ret != 0)
         {
+            free(target_inode);
+            target_inode = NULL;
             return ret;
         }
         ret = return_full_name_check(target_inode, &filler, buf);
         PRINTF_FLUSH("当前目录装填结果：%d\n", ret);
+        free(target_inode);
+        target_inode = NULL;
         return ret;
     }
 }
@@ -186,6 +205,8 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     PRINTF_FLUSH("查找目录结果：%d\n", ret);
     if (ret !=0 )
     {
+        free(target_inode);
+        target_inode = NULL;
         return ret;
     }
     // TODO:判断是不是目录
@@ -194,11 +215,15 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     off_t file_size = target_inode->st_size;
     if (file_size == 0)
     {
+        free(target_inode);
+        target_inode = NULL;
         return 0;
     }
     if (offset >= file_size)
     {
         PRINTF_FLUSH("读入位置或大小超出文件大小！\n");
+        free(target_inode);
+        target_inode = NULL;
         return -EFBIG;
     }
     else
@@ -228,6 +253,8 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     }
     PRINTF_FLUSH("%s\n", buf);
     PRINTF_FLUSH("成功读出了%ld个字节到文件%s中!\n", size, m_paths.new_dir_file_fullname);
+    free(target_inode);
+    target_inode = NULL;
     return size;
 }
 
@@ -254,6 +281,8 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     PRINTF_FLUSH("查找目录结果：%d\n", ret);
     if (ret !=0 )
     {
+        free(target_inode);
+        target_inode = NULL;
         return ret;
     }
     // 拿到文件inode
@@ -262,6 +291,8 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     if (offset > file_size)
     {
         PRINTF_FLUSH("写入位置超出文件大小！\n");
+        free(target_inode);
+        target_inode = NULL;
         return -EFBIG;
     }
     // 如果文件大小为0,只需要直接创建数据块即可(由于offset<=file_size,因此此时offset也为0)
@@ -291,28 +322,30 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
         
         // 更新inode到文件系统
         write_inode(target_inode);
+        free(target_inode);
+        target_inode = NULL;
         return size;
     }
 
 
     // 检查写入数据大小是否大于当前数据块的当前文件指针位置后面的大小
     // 获得文件指针指向的块号
-    short blk_num_id = offset / BLOCK_MAX_DATA_SIZE;
-    short off_real_addr;
-    short off_real_addr_idx;
-    cal_curaddr_idx_curaddr(blk_num_id, &off_real_addr, &off_real_addr_idx);
-    // 根据真实块号得到数据块
-    struct data_block* data_blk = malloc(sizeof(struct data_block));
-    read_data_block(off_real_addr, data_blk);
-    // 检查写入数据大小是否大于当前数据块的当前文件指针位置及后面的大小
-    // 得到当前文件指针位置及后面的大小
-    short later_size = data_blk->used_size - offset;
-    // ——不是的话，直接覆盖即可
-    if (size < later_size)
-    {
-        FILE* file_des = get_file_singleton();
+    // short blk_num_id = offset / BLOCK_MAX_DATA_SIZE;
+    // short off_real_addr;
+    // short off_real_addr_idx;
+    // cal_curaddr_idx_curaddr(blk_num_id, &off_real_addr, &off_real_addr_idx);
+    // // 根据真实块号得到数据块
+    // struct data_block* data_blk = malloc(sizeof(struct data_block));
+    // read_data_block(off_real_addr, data_blk);
+    // // 检查写入数据大小是否大于当前数据块的当前文件指针位置及后面的大小
+    // // 得到当前文件指针位置及后面的大小
+    // short later_size = data_blk->used_size - offset;
+    // // ——不是的话，直接覆盖即可
+    // if (size < later_size)
+    // {
+    //     FILE* file_des = get_file_singleton();
 
-    }
+    // }
 
     // ——是的话，检查后面是否还有数据块
     // —— ——是的话直接覆盖数据，剩下的数据块被系统回收
