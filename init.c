@@ -21,7 +21,7 @@ int main() {
     PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.file_name));
     PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.extension));
     PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.inode_id));
-    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.reserved));
+    PRINTF_FLUSH("dir_entry: %ld\n", sizeof(t.type));
     struct super_block m_sb;
     m_sb.fs_size = FILE_SYSTEM_SIZE / BLOCK_SIZE;
     m_sb.inodebitmap_size = INODE_BITMAP_BLOCK_NUM;
@@ -29,7 +29,7 @@ int main() {
     m_sb.inode_area_size = INODE_AREA_BLOCK_NUM;
     m_sb.datasize = m_sb.fs_size - INODE_BITMAP_BLOCK_NUM - DATA_BITMAP_BLOCK_NUM - INODE_AREA_BLOCK_NUM;
 
-    m_sb.fisrt_blk_of_inodebitmap = 1;
+    m_sb.first_blk_of_inodebitmap = 1;
     m_sb.first_blk_of_databitmap = 2;
     m_sb.first_inode = 6;
     m_sb.first_blk = 518;
@@ -50,7 +50,7 @@ int main() {
     }
     printf("超级块初始化成功！\n");
     // 将文件指针移动到inode位图第一个字节
-    long off = m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE;
+    long off = m_sb.first_blk_of_inodebitmap * BLOCK_SIZE;
     fseek(disk_file, off, SEEK_SET);
     printf("文件指针目前的位置：%ld\n", ftell(disk_file));
     unsigned char inode_first_byte;
@@ -92,7 +92,7 @@ int main() {
     root_dir.st_uid = 0;
     root_dir.st_gid = 0;
     // 根目录的 st_size 字段通常设置为0，因为根目录本身不包含文件数据，只包含对其他目录和文件的引用（即子目录和文件的名称和i-node号）。
-    root_dir.st_size = 0;  // 初始化时根目录下还没有目录项
+    root_dir.st_size = sizeof(struct dir_entry);  // 初始化时根目录下还没有目录项
     struct timespec access_time;
     clock_gettime(CLOCK_REALTIME, &access_time);
     root_dir.st_atim = access_time;

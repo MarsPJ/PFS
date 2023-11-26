@@ -352,8 +352,7 @@ static struct fuse_operations pzj_oper = {
     .read = pzj_read,
     .write = pzj_write,
     .open = pzj_open,
-    .access = pzj_access
-};
+    .access = pzj_access};
 
 int main(int argc, char *argv[]) 
 {

@@ -1,5 +1,6 @@
 
 #pragma pack(1)
+// 强制编译器以紧凑的方式排列结构体的成员，不考虑默认的对齐规则，使得struct dir_entry为16B而不进行填充
 
 #include<unistd.h>
 #include<sys/types.h>
@@ -34,6 +35,7 @@
 #define DIR_ENTRY_MAXNUM_PER_BLOCK 31
 // 最大的文件名或目录名长度
 #define MAX_DIR_FILE_NAME_LEN 8
+#define MAX_EXTENSION_LEN 3
 // 文件名全名（文件名+扩展名）最大长度,不包括.
 // 创建时，如果有.，其实有效文件全名最大长度是7，但是读取的时候还是按有效文件全名最大长度是8的标准开辟空间读取
 // MAX_FILE_FULLNAME_LENGTH + 2，指的是多预留了.和结尾\0符号
@@ -51,16 +53,17 @@
 // 数据块位图占用4块，4*512*8*512=8M。
 // iNode区占用512块，每个inode占用64字节，共有512*512/64=512*8，4k个文件。
 
-struct super_block {
-    long fs_size;  //文件系统的大小，以块为单位
-    long first_blk;  //数据区的第一块块号，根目录也放在此
-    long datasize;  //数据区大小，以块为单位 
-    long first_inode;    //inode区起始块号
-    long inode_area_size;   //inode区大小，以块为单位
-    long fisrt_blk_of_inodebitmap;   //inode位图区起始块号
-    long inodebitmap_size;  // inode位图区大小，以块为单位
-    long first_blk_of_databitmap;   //数据块位图起始块号
-    long databitmap_size;      //数据块位图大小，以块为单位
+struct super_block
+{
+    long fs_size;                  // 文件系统的大小，以块为单位
+    long first_blk;                // 数据区的第一块块号，根目录也放在此
+    long datasize;                 // 数据区大小，以块为单位
+    long first_inode;              // inode区起始块号
+    long inode_area_size;          // inode区大小，以块为单位
+    long first_blk_of_inodebitmap; // inode位图区起始块号
+    long inodebitmap_size;         // inode位图区大小，以块为单位
+    long first_blk_of_databitmap;  // 数据块位图起始块号
+    long databitmap_size;          // 数据块位图大小，以块为单位
 };
 
 /**
@@ -70,15 +73,18 @@ struct super_block {
  * 对于符号链接，st_size是链接目标的路径长度。
 */
 // 存储权限信息以及内容的存储地址
-struct inode { 
-    short st_mode; /* 权限，2字节 */ 
-    short st_ino; /* i-node号，2字节 */ 
-    char st_nlink; /* 链接数，1字节 */ 
-    uid_t st_uid; /* 拥有者的用户 ID ，4字节 */ 
-    gid_t st_gid; /* 拥有者的组 ID，4字节  */ 
-    off_t st_size; /*文件大小，4字节 */ 
-    struct timespec st_atim;/* 16个字节time of last access */ 
-    short addr[7];    /* 磁盘地址，14字节 */
+
+struct inode
+{
+    short st_mode;           // 权限，2字节
+    short st_ino;            // i-node号，2字节
+    char st_nlink;           // 链接数，1字节
+    uid_t st_uid;            // 拥有者的用户 ID ，4字节
+    gid_t st_gid;            // 拥有者的组 ID，4字节
+    off_t st_size;           // 文件大小，4字节
+    struct timespec st_atim; // time of last access，16字节
+    short addr[7];           // 磁盘地址，14字节，其中addr[0]-addr[3]是直接地址，
+                             // addr[4]是一次间接，addr[5]是二次间接，addr[6]是三次间接
 };
 
 // 只有超级块(1)，inode位图区(1)，数据块位图（4），inode区（512）之后的块才会用到（即数据块和索引块）
@@ -87,13 +93,14 @@ struct data_block
     size_t used_size;
     char data[BLOCK_MAX_DATA_SIZE];
 };
+
 // 存储文件名或者目录名，以及inode号
 struct dir_entry
 {
-    char file_name[8 + 1];
-    char extension[3 + 1];
-    short inode_id;
-    char reserved[1];
+    char file_name[MAX_DIR_FILE_NAME_LEN + 1]; // 文件名（不包括扩展名）或者目录名
+    char extension[MAX_EXTENSION_LEN + 1];     // 扩展名
+    short inode_id;                            // inode号
+    char type[1];                              // 文件还是目录标志
 };
 
 // 全局变量
@@ -159,7 +166,7 @@ int split_path(const char* origin_path, struct paths* m_paths)
     {
         // 跳过斜杠
         second_path++;
-        if (strlen(second_path) > MAX_FILE_FULLNAME_LENGTH)
+        if (strlen(second_path) >= MAX_FILE_FULLNAME_LENGTH)
         {
             PRINTF_FLUSH("%s\n", second_path);
             PRINTF_FLUSH("目录或文件全名过长！\n");
@@ -180,7 +187,7 @@ int split_path(const char* origin_path, struct paths* m_paths)
     // 没有二级目录
     else
     {
-        if (strlen(path_cp) > MAX_FILE_FULLNAME_LENGTH)
+        if (strlen(path_cp) >= MAX_FILE_FULLNAME_LENGTH)
         {
             PRINTF_FLUSH("目录或文件全名过长！\n");
             return -1;
@@ -267,7 +274,7 @@ void recall_inode_or_datablk_id(const short id, int mode)
     {
         over_bytes = (id - 1) / 8;
         over_bits = (id - 1) % 8;
-        off = m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE + over_bytes;
+        off = m_sb.first_blk_of_inodebitmap * BLOCK_SIZE + over_bytes;
     }
     // 移动文件指针
     PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(reader));
@@ -417,7 +424,7 @@ void get_free_data_blk(short* ids, int num, int mode)
     else
     {
         PRINTF_FLUSH("申请空闲inode号\n");
-        fseek(reader, m_sb.fisrt_blk_of_inodebitmap * BLOCK_SIZE, SEEK_SET);
+        fseek(reader, m_sb.first_blk_of_inodebitmap * BLOCK_SIZE, SEEK_SET);
     }
     
     long max_byte_num = 0;
@@ -1035,11 +1042,11 @@ int create_file_under_pardir(const char* parent_dir,const char* new_filename, st
 
 int isEmptyDirEntry(struct dir_entry* tmp_dir_entry)
 {
-    PRINTF_FLUSH("%s, %d, %s, %s\n", tmp_dir_entry->file_name, tmp_dir_entry->inode_id, tmp_dir_entry->extension, tmp_dir_entry->reserved);
+    PRINTF_FLUSH("%s, %d, %s, %s\n", tmp_dir_entry->file_name, tmp_dir_entry->inode_id, tmp_dir_entry->extension, tmp_dir_entry->type);
     if (strcmp(tmp_dir_entry->file_name, "") == 0 && 
         tmp_dir_entry->inode_id == 0 &&
         strcmp(tmp_dir_entry->extension, "") == 0 &&
-        strcmp(tmp_dir_entry->reserved, "") == 0)
+        strcmp(tmp_dir_entry->type, "") == 0)
     {
         return 1;
     }
