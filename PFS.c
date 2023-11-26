@@ -1,12 +1,18 @@
 #include"util.h"
 
+
+/**
+ * 获得文件或目录的基本属性
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
     PRINTF_FLUSH("pzj_getattr begin\n");
     PRINTF_FLUSH("getattr	 path : %s \n", path);
     struct inode* targe_inode = NULL;
     struct paths m_paths;
-    if (strcmp("/", path) == 0) {
+    if (strcmp("/", path) == 0) 
+    {
         targe_inode = &root_inode;
         stbuf->st_mode = S_IFDIR;
     }
@@ -20,14 +26,14 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         // 检查长度问题
         if (-1 == ret)
         {
-            PRINTF_FLUSH("新建的文件或目录长度过长！\n");
+            PRINTF_FLUSH("文件或目录长度过长！\n");
             free(targe_inode);
             targe_inode = NULL;
             return -ENAMETOOLONG;
         }
         else if (-2 == ret)
         {
-            PRINTF_FLUSH("新建的文件扩展名长度过长！\n");
+            PRINTF_FLUSH("文件扩展名长度过长！\n");
             free(targe_inode);
             targe_inode = NULL;
             return -ENAMETOOLONG;
@@ -38,7 +44,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         if (0 == strcmp(m_paths.parent_dir, "\0"))
         {
             stbuf->st_mode = S_IFDIR;
-            int ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
+            int ret = get_target_by_parent_inode(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
                 free(targe_inode);
@@ -49,7 +55,7 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
         else
         {
             stbuf->st_mode = S_IFREG;
-            int ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
+            int ret = get_target_by_granpa_inode(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
                 free(targe_inode);
@@ -60,7 +66,6 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
     }
     
     stbuf->st_ino = targe_inode->st_ino;
-    PRINTF_FLUSH("新的inode号为: %lu\n", stbuf->st_ino);
     stbuf->st_mode = targe_inode->st_mode | stbuf->st_mode;
     stbuf->st_nlink = targe_inode->st_nlink;
     stbuf->st_uid = targe_inode->st_uid;
@@ -98,14 +103,9 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
 }
 
 /**
- * 检查路径有效性：首先，检查传入的路径是否表示一个目录，因为只有目录才需要列出内容。如果路径无效或者不是目录，你可以返回一个错误码（例如 ENOTDIR）来指示目录无效。
- * 使用 filler 函数：使用 filler 参数中提供的函数，填充目录项（dirent）。这是列出目录内容的关键步骤。
- * 列出目录项：遍历目录下的文件和子目录，为每个目录项调用 filler 函数，以填充目录项的名称和类型。通常，你需要添加当前目录 ("."，表示该目录自身) 和父目录 (".."，表示上级目录) 到目录项中。
- * 返回成功或错误：如果一切正常，返回0以指示成功。如果发生错误，可以返回适当的错误码（如 ENOENT 表示未找到目录，或其他错误码）来指示问题。
+ * 读取目录信息
+ * 基本思路参照提交的课程设计报告书
 */
-
-// 先通过目录名（绝对路径）找出对应的inode号，再通过inode中的addr，访问这个目录的数据区，读取目录项
-
 int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
     PRINTF_FLUSH( "pzj_readdir	 path : %s \n", path);
@@ -115,21 +115,21 @@ int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
     // 这是根目录
     if(strcmp(path, "/") == 0)
     {   
-        return return_full_name_check(&root_inode, &filler, buf);
+        return fill_fullname_by_parent_inode(&root_inode, &filler, buf);
     }
     else
     {
         struct paths m_paths;
         char* p = (char*)&m_paths;
         memset(p, '\0', sizeof(struct paths));
-        int ret = path_is_legal(path, &m_paths, 1);
+        int ret = split_check_path_error(path, &m_paths, 1);
         PRINTF_FLUSH("路径解析结果：%d\n", ret);
         if (0 != ret)
         {
             return ret;
         }
         struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
-        ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, target_inode);
+        ret = get_target_by_parent_inode(m_paths.new_dir_file_fullname, &root_inode, target_inode);
         PRINTF_FLUSH("父目录查找结果：%d\n", ret);
         if (ret != 0)
         {
@@ -137,7 +137,7 @@ int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
             target_inode = NULL;
             return ret;
         }
-        ret = return_full_name_check(target_inode, &filler, buf);
+        ret = fill_fullname_by_parent_inode(target_inode, &filler, buf);
         PRINTF_FLUSH("当前目录装填结果：%d\n", ret);
         free(target_inode);
         target_inode = NULL;
@@ -145,26 +145,30 @@ int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
     }
 }
 
+
 /**
- * 创建目录： 首要任务是在底层文件系统中创建一个新的目录。这通常涉及到在文件系统中分配一个新的目录条目，设置正确的权限、所有者等信息。
- * 路径解析： 确保创建目录的路径是有效的，并且父目录存在。你需要解析路径以确定父目录的位置。
- * 权限检查： 检查用户是否有权限在指定的目录中创建子目录。这通常涉及到检查访问控制列表（ACL）、文件权限位（例如，读、写、执行权限）等。
- * 更新文件系统状态： 更新文件系统的元数据，包括目录的大小、时间戳、所有者等信息。
- * 回馈结果： 如果创建目录成功，通常需要向用户返回成功的响应。如果创建失败，需要返回错误码，如权限不足、磁盘空间不足等。
+ * 创建目录
+ * 基本思路参照提交的课程设计报告书
 */
-// TODO:检查权限
-
-
-
 static int pzj_mkdir (const char *path, mode_t mode)
 {
     return create_dir_or_file(path, mode, 1);
 }
+
+/**
+ * 创建文件
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_mknod (const char *path, mode_t mode, dev_t dev)
 {
     dev=0;
     return create_dir_or_file(path, mode, 2);
 }
+
+/**
+ * 更新访问时间
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi) 
 {   
     PRINTF_FLUSH("pzj_utimens begin\n");
@@ -201,7 +205,7 @@ static int pzj_utimens(const char *path, const struct timespec tv[2], struct fus
         
         if (0 == strcmp(m_paths.parent_dir, "\0"))
         {
-            int ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
+            int ret = get_target_by_parent_inode(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
                 free(targe_inode);
@@ -211,7 +215,7 @@ static int pzj_utimens(const char *path, const struct timespec tv[2], struct fus
         }
         else
         {
-            int ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
+            int ret = get_target_by_granpa_inode(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
             if (ret != 0)
             {
                 free(targe_inode);
@@ -224,15 +228,28 @@ static int pzj_utimens(const char *path, const struct timespec tv[2], struct fus
     return 0; 
 }
 
-
+/**
+ * 删除目录
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_rmdir (const char *path)
 {
     return remove_dir_or_file(path, 1);
 }
+
+/**
+ * 删除文件
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_unlink (const char *path)
 {
     return remove_dir_or_file(path, 2);
 }
+
+/**
+ * 读文件
+ * 基本思路参照提交的课程设计报告书
+*/
 // size是用户要读取的数据大小，offset是文件偏移指针
 static int pzj_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
@@ -240,7 +257,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     struct paths m_paths;
     char* p = (char*)&m_paths;
     memset(p, '\0', sizeof(struct paths));
-    int ret = path_is_legal(path, &m_paths, 2);
+    int ret = split_check_path_error(path, &m_paths, 2);
     PRINTF_FLUSH("路径解析结果：%d\n", ret);
     if (-ENAMETOOLONG == ret)
     {
@@ -253,7 +270,7 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
 
 
     struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
-    ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
+    ret = get_target_by_granpa_inode(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
     PRINTF_FLUSH("查找目录结果：%d\n", ret);
     if (ret !=0 )
     {
@@ -310,6 +327,10 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
     return size;
 }
 
+/**
+ * 写文件
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_write (const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
     PRINTF_FLUSH("pzj_write %s\n", path);
@@ -317,7 +338,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     struct paths m_paths;
     char* p = (char*)&m_paths;
     memset(p, '\0', sizeof(struct paths));
-    int ret = path_is_legal(path, &m_paths, 2);
+    int ret = split_check_path_error(path, &m_paths, 2);
     PRINTF_FLUSH("路径解析结果：%d\n", ret);
     if (-ENAMETOOLONG == ret)
     {
@@ -329,7 +350,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     }
 
     struct inode* target_inode = (struct inode*)malloc(sizeof(struct inode));
-    ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
+    ret = get_target_by_granpa_inode(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, target_inode);
     PRINTF_FLUSH("查找目录结果：%d\n", ret);
     if (ret !=0 )
     {
@@ -404,34 +425,53 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     // —— ——不是的话申请空闲数据块并写入
     // 从写入位置开始，覆盖之前的数据内容
 }
+
+/**
+ * 打开文件
+ * 基本思路参照提交的课程设计报告书
+*/
 static int pzj_open(const char *path, struct fuse_file_info *fi)
 {
     return 0;
 }
-//进入目录
+
+
+/**
+ * 权限检查
+ * 按照默认即可
+*/
 static int pzj_access(const char *path, int flag)
 {
 	return 0;
 }
+
+/**
+ * 初始化
+ * 基本思路参照提交的课程设计报告书
+*/
 void * pzj_init(struct fuse_conn_info * conn_info, struct fuse_config * config) 
 {
     get_sb_info();
     get_root_inode(&root_inode);
-	printf("pzj_init：函数结束返回\n\n");
 }
+
+/**
+ * 注册并实现的函数
+*/
 static struct fuse_operations pzj_oper = {
-    .init = pzj_init,
-    .getattr = pzj_getattr,
-    .readdir = pzj_readdir,
-    .mkdir = pzj_mkdir,
-    .mknod = pzj_mknod,
-    .utimens = pzj_utimens,
-    .rmdir = pzj_rmdir,
-    .unlink = pzj_unlink,
-    .read = pzj_read,
-    .write = pzj_write,
-    .open = pzj_open,
-    .access = pzj_access};
+    .init = pzj_init,       // 初始化函数
+    .getattr = pzj_getattr, // 获取文件或目录属性函数
+    .readdir = pzj_readdir, // 读取目录函数
+    .mkdir = pzj_mkdir,     // 创建目录函数
+    .mknod = pzj_mknod,     // 创建文件函数
+    .utimens = pzj_utimens, // 更新访问时间函数
+    .rmdir = pzj_rmdir,     // 删除目录函数
+    .unlink = pzj_unlink,   // 删除文件函数
+    .read = pzj_read,       // 读文件函数
+    .write = pzj_write,     // 写文件函数
+    .open = pzj_open,       // 打开文件函数
+    .access = pzj_access    // 权限检查函数
+};
 
 int main(int argc, char *argv[]) 
 {
