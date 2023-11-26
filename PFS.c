@@ -165,11 +165,63 @@ static int pzj_mknod (const char *path, mode_t mode, dev_t dev)
     dev=0;
     return create_dir_or_file(path, mode, 2);
 }
-static int pzj_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi) {
-    // 在这里实现处理 UTIMENS 操作的逻辑，设置文件的访问时间和修改时间
-    // ...
-
-    return 0; // 成功时返回0，失败时返回-errno
+static int pzj_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi) 
+{   
+    PRINTF_FLUSH("pzj_utimens begin\n");
+    PRINTF_FLUSH("pzj_utimens	 path : %s \n", path);
+    struct inode* targe_inode = NULL;
+    struct paths m_paths;
+    if (strcmp("/", path) == 0) {
+        targe_inode = &root_inode;
+    }
+    else 
+    {
+        targe_inode = (struct inode*)malloc(sizeof(struct inode));
+        char* p = (char*)&m_paths;
+        memset(p, '\0', sizeof(struct paths));
+        int ret = split_path(path, &m_paths);
+        printf("ret: %d\n", ret);
+        // 检查长度问题
+        if (-1 == ret)
+        {
+            PRINTF_FLUSH("新建的文件或目录长度过长！\n");
+            free(targe_inode);
+            targe_inode = NULL;
+            return -ENAMETOOLONG;
+        }
+        else if (-2 == ret)
+        {
+            PRINTF_FLUSH("新建的文件扩展名长度过长！\n");
+            free(targe_inode);
+            targe_inode = NULL;
+            return -ENAMETOOLONG;
+        }
+        
+        PRINTF_FLUSH("请求的文件或目录名：%s\n", m_paths.new_dir_file_fullname);
+        
+        if (0 == strcmp(m_paths.parent_dir, "\0"))
+        {
+            int ret = return_inode_check(m_paths.new_dir_file_fullname, &root_inode, targe_inode);
+            if (ret != 0)
+            {
+                free(targe_inode);
+                targe_inode = NULL;
+                return ret;
+            }
+        }
+        else
+        {
+            int ret = return_inode_2path_check(m_paths.parent_dir, m_paths.new_dir_file_fullname, &root_inode, targe_inode);
+            if (ret != 0)
+            {
+                free(targe_inode);
+                targe_inode = NULL;
+                return ret;
+            }
+        }
+    }
+    targe_inode->st_atim = tv[0];
+    return 0; 
 }
 
 
