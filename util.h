@@ -313,7 +313,8 @@ void recall_inode_or_datablk_id(const short id, int mode)
     PRINTF_FLUSH("文件指针目前的位置：%ld\n", ftell(file_des));
     fseek(file_des, off, SEEK_SET);
     PRINTF_FLUSH("移动后文件指针目前的位置：%ld\n", ftell(file_des));
- 
+
+
     unsigned char cur_byte;
     // 将指定位置置为0
     fread(&cur_byte, sizeof(char), 1, file_des);

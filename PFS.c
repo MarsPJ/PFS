@@ -217,9 +217,9 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
 
         size_t read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
         PRINTF_FLUSH("cur_addr: %hd, read_size: %ld\n", cur_addr, read_size);
-        FILE* reader = get_file_singleton();
-        fseek(reader, cur_addr * BLOCK_SIZE, SEEK_SET);
-        fread(buf, 1, read_size, reader);
+        FILE* file_des = get_file_singleton();
+        fseek(file_des, cur_addr * BLOCK_SIZE, SEEK_SET);
+        fread(buf, 1, read_size, file_des);
 
         remain_size -= read_size;
         read_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
@@ -273,12 +273,12 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
         get_free_data_blk(data_blk_id, data_blk_num, 1);
         size_t remain_size = size;
         size_t write_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
-        FILE* reader = get_file_singleton();
+        FILE* file_des = get_file_singleton();
         for (int i = 0; i < data_blk_num; ++i)
         {
             target_inode->addr[i] = data_blk_id[i];
-            fseek(reader, data_blk_id[i] * BLOCK_SIZE, SEEK_SET);
-            fwrite(buf, 1, write_size, reader);
+            fseek(file_des, data_blk_id[i] * BLOCK_SIZE, SEEK_SET);
+            fwrite(buf, 1, write_size, file_des);
             remain_size -= write_size;
             write_size = BLOCK_SIZE < remain_size ? BLOCK_SIZE : remain_size;
 
@@ -310,7 +310,7 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
     // ——不是的话，直接覆盖即可
     if (size < later_size)
     {
-        FILE* reader = get_file_singleton();
+        FILE* file_des = get_file_singleton();
 
     }
 

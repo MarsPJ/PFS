@@ -34,8 +34,8 @@ int main() {
     m_sb.first_inode = 6;
     m_sb.first_blk = 518;
     // 声明一个文件指针
-    FILE* reader = get_file_singleton();
-    if (reader == NULL) {
+    FILE* file_des = get_file_singleton();
+    if (file_des == NULL) {
         perror("无法打开文件'dikimg'");
         return 1;
     }
@@ -43,32 +43,32 @@ int main() {
     // fread(&tmp, sizeof(short int), 1, disk_file);
     // printf("tmp: %hd\n", tmp);
     // 将超级块的信息写入磁盘文件
-    if (1 != fwrite(&m_sb, sizeof(struct super_block), 1, reader)) {
+    if (1 != fwrite(&m_sb, sizeof(struct super_block), 1, file_des)) {
         perror("超级块写入diskimg失败!\n");
         return 1;
     }
     printf("超级块初始化成功！\n");
     // 将文件指针移动到inode位图第一个字节
     long off = m_sb.first_blk_of_inodebitmap * BLOCK_SIZE;
-    fseek(reader, off, SEEK_SET);
-    printf("文件指针目前的位置：%ld\n", ftell(reader));
+    fseek(file_des, off, SEEK_SET);
+    printf("文件指针目前的位置：%ld\n", ftell(file_des));
     unsigned char inode_first_byte;
     // 读取第一个字节数据(文件指针会跟着偏移)
     // fread参数：要读取数据的目标内存地址、要读取的每个元素的大小（以字节为单位）、要读取的元素的数量、要从中读取数据的文件指针
-    fread(&inode_first_byte, 1, 1, reader);
+    fread(&inode_first_byte, 1, 1, file_des);
     printf("inode_first_byte的值：%d\n", inode_first_byte);
     // 将该字节最低位置为1
     inode_first_byte |= 0x01;
     printf("更新后的inode_first_byte的值：%d\n", inode_first_byte);
     // 将文件指针复位
-    fseek(reader, off, SEEK_SET);
-    printf("文件指针目前的位置：%ld\n", ftell(reader));
+    fseek(file_des, off, SEEK_SET);
+    printf("文件指针目前的位置：%ld\n", ftell(file_des));
     // 重新写回文件
-    if (1 != fwrite(&inode_first_byte, 1, 1, reader)) {
+    if (1 != fwrite(&inode_first_byte, 1, 1, file_des)) {
         perror("inode位图区更新失败\n");
         return 1;
     }
-    printf("写入后文件指针目前的位置：%ld\n", ftell(reader));
+    printf("写入后文件指针目前的位置：%ld\n", ftell(file_des));
     printf("inode位图区初始化成功！\n");
 
     struct inode root_dir;
@@ -102,9 +102,9 @@ int main() {
 
     // root_dir.addr[0] = m_sb.first_blk;  // 这样应该是正确的初始化
 
-    fseek(reader, BLOCK_SIZE * m_sb.first_inode, SEEK_SET);
-    fwrite(&root_dir, sizeof(struct inode), 1, reader);
-    fseek(reader, BLOCK_SIZE * m_sb.first_inode, SEEK_SET);
+    fseek(file_des, BLOCK_SIZE * m_sb.first_inode, SEEK_SET);
+    fwrite(&root_dir, sizeof(struct inode), 1, file_des);
+    fseek(file_des, BLOCK_SIZE * m_sb.first_inode, SEEK_SET);
     printf("根目录初始化成功！\n");
     
     // 显示当前时间
@@ -129,13 +129,13 @@ int main() {
         return 1;
     }
     printf("start\n");
-    if (reader == NULL) {
+    if (file_des == NULL) {
         printf("diskimg打开失败");
     }
     else {
-        fseek(reader, m_sb.first_inode * BLOCK_SIZE, SEEK_SET);
+        fseek(file_des, m_sb.first_inode * BLOCK_SIZE, SEEK_SET);
         struct inode tmp_node;
-        fread(&tmp_node, sizeof(struct inode), 1, reader);
+        fread(&tmp_node, sizeof(struct inode), 1, file_des);
         printf("%hd, %hd\n", tmp_node.st_ino, tmp_node.addr[0]);
     }
     close_file_singleton();
