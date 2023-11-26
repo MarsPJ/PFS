@@ -109,6 +109,40 @@ const char* disk_path = "/root/data/PFS/diskimg";
 // 根目录
 struct inode root_inode;
 
+FILE *get_file_singleton() {
+    // 静态局部变量，用于保存文件指针
+    static FILE *file_singleton = NULL;
+
+    // 如果文件指针为NULL，表示还没有打开文件
+    if (file_singleton == NULL) {
+        // 打开文件，这里假设文件名为 "diskimg"
+        file_singleton = fopen(disk_path, "r+");
+        
+        // 如果文件打开失败，输出错误信息并退出程序
+        if (file_singleton == NULL) {
+            perror("Error opening file");
+            exit(EXIT_FAILURE);
+        }
+
+    }
+    fflush(file_singleton);
+    // 返回文件指针
+    return file_singleton;
+}
+
+void close_file_singleton() {
+    // 获取文件指针
+    FILE *file_singleton = get_file_singleton();
+
+    // 关闭文件
+    if (file_singleton != NULL) {
+        fclose(file_singleton);
+        file_singleton = NULL;
+    }
+}
+
+
+
 
 #define PRINTF_FLUSH(fmt, ...) do { \
     printf(fmt, ##__VA_ARGS__); \
@@ -256,8 +290,7 @@ void recall_inode_or_datablk_id(const short id, int mode)
         PRINTF_FLUSH("重置inode位图区！\n");
     }
     
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "r+");
+    FILE* reader = get_file_singleton();
     short over_bytes;
     short over_bits;
     long off;
@@ -293,7 +326,6 @@ void recall_inode_or_datablk_id(const short id, int mode)
     // 将数据重新写入
     fwrite(&cur_byte, sizeof(char), 1, reader);
     PRINTF_FLUSH("写入后文件指针目前的位置：%ld\n", ftell(reader));
-    fclose(reader);
     PRINTF_FLUSH("重置成功！\n");
 
 }
@@ -341,12 +373,10 @@ void recall_data_block(const struct inode cur_inode)
 // 写回更新的inode到文件系统
 void write_inode(struct inode* cur_inode)
 {
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "r+");
+    FILE* reader = get_file_singleton();
     long off = m_sb.first_inode * BLOCK_SIZE + (cur_inode->st_ino - 1) * sizeof(struct inode);
     fseek(reader, off, SEEK_SET);
     fwrite(cur_inode, sizeof(struct inode), 1, reader);
-    fclose(reader);
     PRINTF_FLUSH("inode号为%hd的目录(父目录)的inode成功更新到文件系统！\n", cur_inode->st_ino);
 }
 
@@ -360,8 +390,7 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
 {
     PRINTF_FLUSH("开始更新删除目录的父目录(根目录)的信息...\n");
     
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "r+");
+    FILE* reader = get_file_singleton();    
     // 更新根目录数据块记录的目录项信息(只需要更新数据块已使用大小)
     // TODO:是否要物理清空对应位置数据
     short tmp_addr = parent_inode->addr[tmp_addr_i];
@@ -385,7 +414,6 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
     long off = tmp_addr * BLOCK_SIZE;
     fseek(reader, off, SEEK_SET);
     fwrite(data_blk, sizeof(struct data_block), 1, reader);
-    fclose(reader);
     // 更新根目录大小
     // PRINTF_FLUSH("根目录原来的大小为：%ld\n", root_inode.st_size);
     // root_inode.st_size -= sizeof(struct dir_entry);
@@ -414,8 +442,7 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
 // mode=2表示返回空闲inode号
 void get_free_data_blk(short* ids, int num, int mode)
 {
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "r+");
+    FILE* reader = get_file_singleton();
     if (mode == 1)
     {
         PRINTF_FLUSH("申请空闲数据块\n");
@@ -481,7 +508,6 @@ void get_free_data_blk(short* ids, int num, int mode)
         fwrite(&cur_byte, sizeof(unsigned char), 1, reader);
         byte_count++;
     }
-    fclose(reader);
     if (count_ids == num)
     {
         PRINTF_FLUSH("成功申请得到和预期一致的%d个空闲块或inode号%hd\n", count_ids, *ids);
@@ -498,8 +524,7 @@ void get_free_data_blk(short* ids, int num, int mode)
 // 根据addr（块号）读取块的数据，成功读取返回0，否则返回-1
 int read_data_block(short addr,struct data_block* data_blk)
 {
-    FILE* reader;
-    reader = fopen(disk_path, "rb");
+    FILE* reader = get_file_singleton();
     if (NULL == reader)
     {
         PRINTF_FLUSH("read_data_block中diskimg打开失败！\n");
@@ -510,7 +535,6 @@ int read_data_block(short addr,struct data_block* data_blk)
     fseek(reader, addr * BLOCK_SIZE, SEEK_SET);
     fread(data_blk, sizeof(struct data_block), 1, reader);
     PRINTF_FLUSH("读取数据块的块地址为: %hd, 已使用大小为: %zu\n", addr, data_blk->used_size);
-    fclose(reader);
     return 0;
 }
 
@@ -669,11 +693,9 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
             short* direct_addr = (short*)data_blk->data;
             *direct_addr = blk_id[1];
             *next_addr = *direct_addr;
-            FILE* reader = NULL;
-            reader = fopen(disk_path, "r+");
+            FILE* reader = get_file_singleton();
             fseek(reader, blk_id[0] * BLOCK_SIZE, SEEK_SET);
             fwrite(data_blk, sizeof(struct data_block), 1, reader);
-            fclose(reader);
             // 更新addr数组
             addr[*next_addr_idx] = blk_id[0];
         }
@@ -693,10 +715,8 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
         {
             get_free_data_blk(next_addr, 1, 1);
             *p = *next_addr;
-            FILE* reader = NULL;
-            reader = fopen(disk_path, "r+");
+            FILE* reader = get_file_singleton();
             fwrite(parent_data_blk, sizeof(struct data_block), 1, reader);
-            fclose(reader);
         }
         else
         {
@@ -747,12 +767,10 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
         new_inode.addr[i] = -1;
     }
     // 将inode放入inode数据区
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "r+");
+    FILE* reader = get_file_singleton();
     long off = m_sb.first_inode * BLOCK_SIZE + (new_inode.st_ino - 1) * sizeof(struct inode);
     fseek(reader, off, SEEK_SET);
     fwrite(&new_inode, sizeof(struct inode), 1, reader);
-    fclose(reader);
     // 将dir_entry放入数据区，更新根目录的大小以及addr地址并将根目录信息重新写入文件系统
 
     /**
@@ -802,13 +820,11 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     // 先读取原来的数据
     else
     {
-        FILE* reader = NULL;
-        reader = fopen(disk_path, "r+");
+        FILE* reader = get_file_singleton();
         tmp_addr = parent_inode->addr[count];
         off = tmp_addr * BLOCK_SIZE;
         fseek(reader, off, SEEK_SET);
         fread(tmp_data_blk, sizeof(struct data_block), 1, reader);
-        fclose(reader);
         // 检查原来的数据块是否已经满了
         // 当前数据块已存的目录数
         int cur_dir_num = tmp_data_blk->used_size / sizeof(struct dir_entry);
@@ -866,14 +882,12 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
     tmp_data_blk->used_size += sizeof(struct dir_entry);
     PRINTF_FLUSH("1\n");
     // 将数据块信息写入文件
-    reader = NULL;
-    reader = fopen(disk_path, "r+");
+    reader = get_file_singleton();
     PRINTF_FLUSH("1\n");
     fseek(reader, off, SEEK_SET);
     PRINTF_FLUSH("1\n");
     fwrite(tmp_data_blk, sizeof(struct data_block), 1, reader);
     PRINTF_FLUSH("目录项写入数据区成功！\n");
-    fclose(reader);
     // 将父目录信息重新写入文件系统
     write_inode(parent_inode);
     free(tmp_data_blk);
@@ -885,10 +899,9 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
 void get_sb_info() 
 {
     PRINTF_FLUSH("get_sb_info begin\n");
-    FILE* reader = fopen(disk_path, "rb");
+    FILE* reader = get_file_singleton();
     fread(&m_sb, sizeof(struct super_block), 1, reader);
     PRINTF_FLUSH("fs_size: %ld\nfirst_blk: %ld\ndatasize: %ld\nfirst_node: %ld\n", m_sb.fs_size, m_sb.first_blk, m_sb.datasize, m_sb.first_inode);
-    fclose(reader);
     PRINTF_FLUSH("get_sb_info end\n");
 }
 
@@ -897,7 +910,7 @@ void get_sb_info()
 int get_root_inode(struct inode* tmp_node)
 {
     PRINTF_FLUSH("get_root_inode begin\n");
-    FILE* reader = fopen(disk_path, "rb");
+    FILE* reader = get_file_singleton();
     if (reader == NULL) {
         PRINTF_FLUSH("get_root_inode中diskimg打开失败\n");
         PRINTF_FLUSH("get_root_inode end\n");
@@ -912,7 +925,6 @@ int get_root_inode(struct inode* tmp_node)
         fseek(reader, m_sb.first_inode * BLOCK_SIZE, SEEK_SET);
         fread(tmp_node, sizeof(struct inode), 1, reader);
         PRINTF_FLUSH("get_root_inode:\n tmp_node->st_ino: %hd,  tmp_node->addr: %hd\n", tmp_node->st_ino, tmp_node->addr[0]);
-        fclose(reader);
         PRINTF_FLUSH("get_root_inode end\n");
         return 0;
     }
@@ -920,8 +932,7 @@ int get_root_inode(struct inode* tmp_node)
 }
 int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk)
 {
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "rb");
+    FILE* reader = get_file_singleton();
     int count = 0;
     PRINTF_FLUSH("getFileFullNameByDataBlock: %d\n", count);
     if (NULL == reader)
@@ -949,7 +960,6 @@ int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk
         tmp_dir_entry++;
         pos += sizeof(struct dir_entry);
     }
-    fclose(reader);
     return i;
 }
 
@@ -993,12 +1003,10 @@ int return_inode_check(const char* dir_file_name, struct inode* parent_inode, st
             if (0 == strcmp(dir_file_name, full_name))
             {
                 short target_inode_id = tmp_dir_entry->inode_id;
-                FILE* reader = NULL;
-                reader = fopen(disk_path, "rb");
+                FILE* reader = get_file_singleton();
                 long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
                 fseek(reader, off, SEEK_SET);
                 fread(target_inode, sizeof(struct inode), 1, reader);
-                fclose(reader);
                 free(data_blk);
                 return 0;
 
@@ -1029,13 +1037,11 @@ int create_file_under_pardir(const char* parent_dir,const char* new_filename, st
     short parent_inode_id = parent_dir_entry->inode_id;
     // 在父目录下创建文件
     // 先得到父目录的inode
-    FILE* reader = NULL;
-    reader = fopen(disk_path, "r+");
+    FILE* reader = get_file_singleton();
     long off = m_sb.first_inode * BLOCK_SIZE + (parent_inode_id - 1) * sizeof(struct inode);
     fseek(reader, off, SEEK_SET);
     struct inode parent_inode;
     fread(&parent_inode, sizeof(struct inode), 1, reader);
-    fclose(reader);
     // 检查是否有重名的文件
     return real_create_dir_or_file(&parent_inode, mode, type, new_filename);
 }
@@ -1232,13 +1238,11 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
             {
                 PRINTF_FLUSH("查找到相同的目录或文件名！\n");
                 short target_inode_id = tmp_dir_entry->inode_id;
-                FILE* reader = NULL;
-                reader = fopen(disk_path, "rb");
+                FILE* reader = get_file_singleton();
                 long off = m_sb.first_inode * BLOCK_SIZE + (target_inode_id - 1) * sizeof(struct inode);
                 fseek(reader, off, SEEK_SET);
                 struct inode tmp_inode;
                 fread(&tmp_inode, sizeof(struct inode), 1, reader);
-                fclose(reader);
                 // 判断是否是空目录
                 PRINTF_FLUSH("tmp_inode: %hd\ntmp_inode.addr[0]: %hd\n", tmp_inode.st_ino, tmp_inode.addr[0]);
                 if (type == 1 && -1 != tmp_inode.addr[0])
