@@ -45,13 +45,14 @@
 // 磁盘文件路径
 #define DISK_PATH  "/root/data/PFS/diskimg"
 
-// 每个块512字节
-// 超级块(1)，inode位图区(1)，数据块位图（4），inode区（512）
-// 超级块占用1块，用于描述整个文件系统
-// Inode 位图占用1块，共计1*512*8=4k位，即该文件系统最多能够有4k个文件。
-// 数据块位图占用4块，4*512*8*512=8M。
-// iNode区占用512块，每个inode占用64字节，共有512*512/64=512*8，4k个文件。
-
+/**
+ * 每个块512字节
+ * 超级块(1)，inode位图区(1)，数据块位图（4），inode区（512）
+ * 超级块占用1块，用于描述整个文件系统
+ * Inode 位图占用1块，共计1*512*8=4k位，即该文件系统最多能够有4k个文件。
+ * 数据块位图占用4块，4*512*8*512=8M。
+ * iNode区占用512块，每个inode占用64字节，共有512*512/64=512*8，4k个文件。
+ */
 struct super_block
 {
     long fs_size;                  // 文件系统的大小，以块为单位
@@ -109,13 +110,21 @@ struct paths
 };
 
 
-// 全局变量
+/**
+ * 全局变量
+ * */ 
 // 超级块
 struct super_block m_sb;
 // 根目录inode
 struct inode root_inode;
 
-// 单例模式
+/**
+ * @brief 获取文件单例模式的文件指针
+ *
+ * 单例模式，确保只有一个文件指针实例，用于操作文件。
+ *
+ * @return FILE* 文件指针
+ */
 FILE *get_file_singleton() {
     // 静态局部变量，用于保存文件指针
     static FILE *file_singleton = NULL;
@@ -137,6 +146,11 @@ FILE *get_file_singleton() {
     return file_singleton;
 }
 
+/**
+ * @brief 关闭文件单例模式的文件指针
+ *
+ * 关闭之前获取的文件指针，确保文件操作完成后及时释放资源。
+ */
 void close_file_singleton() {
     // 获取文件指针
     FILE *file_singleton = get_file_singleton();
@@ -150,14 +164,29 @@ void close_file_singleton() {
 
 
 
-// 在打印消息后刷新标准输出缓冲区，使得可以立即得到输出信息
+/**
+ * @brief 打印消息并刷新标准输出缓冲区
+ *
+ * 在打印消息后立即刷新标准输出缓冲区，确保可以立即得到输出信息。
+ *
+ * @param fmt 格式化字符串
+ * @param ... 可变参数列表
+ */
 #define PRINTF_FLUSH(fmt, ...) do { \
     printf(fmt, ##__VA_ARGS__); \
     fflush(stdout); \
 } while (0)
 
-// 分割文件名和扩展名
-// 扩展名过长返回-2，否则返回0
+/**
+ * @brief 分割文件名和扩展名
+ *
+ * 给定一个文件名，将文件名和扩展名分开。
+ *
+ * @param filename 待分割的文件名
+ * @param name 存储文件名的字符数组
+ * @param extension 存储扩展名的字符数组
+ * @return int 分割成功返回0，扩展名过长返回-2
+ */
 int SplitFileNameAndExtension(const char* filename, char* name, char* extension) {
     const char* dot = strrchr(filename, '.');
     
@@ -184,8 +213,13 @@ int SplitFileNameAndExtension(const char* filename, char* name, char* extension)
     return 0;
 }
 
-// 路径分割(以/开头)，将路径分割成父目录、文件名（不包括扩展名）、扩展名
-// 返回-1表示文件全名或目录名过长，-2表示扩展名过长，否则返回0
+/**
+ * @brief 路径分割(以/开头)，将路径分割成父目录、文件名（不包括扩展名）、扩展名
+ *
+ * @param origin_path 待分割的路径
+ * @param m_paths 存储分割结果的结构体
+ * @return int 分割成功返回0，文件全名或目录名过长返回-1，扩展名过长返回-2
+ */
 int split_path(const char* origin_path, struct paths* m_paths)
 {
     PRINTF_FLUSH("开始解析路径...\n");
@@ -237,7 +271,16 @@ int split_path(const char* origin_path, struct paths* m_paths)
     }
 }
 
-// 根据split_path的结果返回对应的error值
+/**
+ * @brief 根据split_path的结果返回对应的error值
+ *
+ * 根据路径分割的结果和指定的操作类型，返回对应的错误值。
+ *
+ * @param origin_path 待检查的路径
+ * @param m_paths 存储分割结果的结构体
+ * @param type 操作类型，1表示创建目录，其他表示创建文件
+ * @return int 操作成功返回0，文件或目录长度过长返回-ENAMETOOLONG，文件扩展名长度过长返回-ENAMETOOLONG，不能在根目录创建返回-EPERM
+ */
 int split_check_path_error(const char* origin_path, struct paths* m_paths, int type)
 {
     int ret = split_path(origin_path, m_paths);
@@ -277,9 +320,14 @@ int split_check_path_error(const char* origin_path, struct paths* m_paths, int t
     return 0;
 }
 
-// 根据inodo号或者块号(addr)重置inode位图区或者数据块位图区
-// mode=1表示重置数据块位图区，id即为addr
-// mode=2表示重置inode位图区，id即为inode号
+/**
+ * @brief 根据inode号或者块号(addr)重置inode位图区或者数据块位图区
+ *
+ * 根据指定的inode号或者块号(addr)以及模式，重置对应的inode位图区或者数据块位图区。
+ *
+ * @param id inode号或者块号(addr)
+ * @param mode 模式，1表示重置数据块位图区，2表示重置inode位图区
+ */
 void recall_inode_or_datablk_id(const short id, int mode)
 {
     if (mode == 1)
@@ -337,7 +385,13 @@ void recall_inode_or_datablk_id(const short id, int mode)
 }
 
 
-// 根据inode回收数据块
+/**
+ * @brief 根据inode回收数据块
+ *
+ * 根据给定的inode，回收占用的数据块。
+ *
+ * @param cur_inode 待回收数据块的inode
+ */
 void recall_data_block(const struct inode cur_inode)
 {
     PRINTF_FLUSH("开始回收数据块!\n");
@@ -361,7 +415,13 @@ void recall_data_block(const struct inode cur_inode)
    
 }
 
-// 写回更新的inode到文件系统
+/**
+ * @brief 写回更新的inode到文件系统
+ *
+ * 将更新后的inode写回文件系统，以保持文件系统的一致性。
+ *
+ * @param cur_inode 更新后的inode
+ */
 void write_inode(struct inode* cur_inode)
 {
     FILE* file_des = get_file_singleton();
@@ -371,10 +431,16 @@ void write_inode(struct inode* cur_inode)
     PRINTF_FLUSH("inode号为%hd的目录(父目录)的inode成功更新到文件系统！\n", cur_inode->st_ino);
 }
 
-// 删除目录时更新根目录信息
-// 更新父目录(根目录)信息
-// 1.父目录addr地址数组
-// 2.如果当前目录独占一个父目录的数据块,则需要对这个数据块进行回收操作
+/**
+ * @brief 删除目录时更新根目录信息
+ *
+ * 更新父目录(根目录)的信息，包括父目录的地址数组和独占的数据块的回收操作。
+ *
+ * @param parent_inode 父目录(根目录)的inode
+ * @param data_blk 父目录(根目录)对应的数据块
+ * @param tmp_addr_i 当前目录的地址在父目录的地址数组中的索引
+ * @param rm_dir_entry 被删除的目录项信息
+ */
 void update_parent_info(struct inode* parent_inode, struct data_block* data_blk, const int tmp_addr_i, struct dir_entry* rm_dir_entry)
 {
     PRINTF_FLUSH("开始更新删除目录的父目录(根目录)的信息...\n");
@@ -421,12 +487,20 @@ void update_parent_info(struct inode* parent_inode, struct data_block* data_blk,
 
 
 
-// 每个索引块指向的内容都属于同一个文件
-// 同一个文件分配的数据块可以不连续，只需要把块地址都放到同一个索引块中即可（按顺序）
+/**
+ * 每个索引块指向的内容都属于同一个文件
+ * 同一个文件分配的数据块可以不连续，只需要把块地址都放到同一个索引块中即可（按顺序）
+*/ 
 
-// 不考虑超出最大文件数的情况
-// mode=1表示返回空闲数据块
-// mode=2表示返回空闲inode号
+/**
+ * @brief 获取空闲数据块或inode号
+ *
+ * 根据给定的模式，获取空闲的数据块或inode号。
+ *
+ * @param ids 存储获取到的空闲块号或inode号的数组
+ * @param num 需要获取的空闲块或inode号的数量
+ * @param mode 模式，1表示获取空闲数据块，2表示获取空闲inode号
+ */
 void get_free_data_blk(short* ids, int num, int mode)
 {
     FILE* file_des = get_file_singleton();
@@ -508,7 +582,17 @@ void get_free_data_blk(short* ids, int num, int mode)
         PRINTF_FLUSH("申请得到少于预期的%d个空闲块或inode号\n", count_ids);
     }
 }
-// 根据addr（块号）读取块的数据，成功读取返回0，否则返回-1
+
+
+/**
+ * @brief 根据块号读取块的数据
+ *
+ * 根据给定的块号，从磁盘文件中读取对应块的数据。
+ *
+ * @param addr 块号
+ * @param data_blk 存储读取到的块数据的结构体指针
+ * @return 成功读取返回0，否则返回-1
+ */
 int read_data_block(short addr,struct data_block* data_blk)
 {
     FILE* file_des = get_file_singleton();
@@ -525,7 +609,17 @@ int read_data_block(short addr,struct data_block* data_blk)
     return 0;
 }
 
-// 根据当前addr在addr[7]中的idx和addr，得到下一个addr以及addr的idx，如果没有下一个有效地址，则next_addr和next_addr_idx都会被置为-1
+/**
+ * @brief 根据当前地址在addr[7]中的索引和地址，得到下一个地址以及地址的索引
+ *
+ * 如果没有下一个有效地址，则next_addr和next_addr_idx都会被置为-1。
+ *
+ * @param addr 存储地址的数组
+ * @param next_addr 用于存储下一个地址的指针
+ * @param next_addr_idx 用于存储下一个地址的索引的指针
+ * @param parent_data_blk 父级数据块
+ * @param grandfather_data_blk 祖父级数据块
+ */
 void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx, struct data_block* parent_data_blk, struct data_block* grandfather_data_blk)
 {
     short cur_addr_idx = *next_addr_idx;
@@ -626,7 +720,14 @@ void get_valid_addr(short addr[7], short* next_addr, short* next_addr_idx, struc
 }
 
 
-// flag = 1 表示只是读数据块，flag = 2 表示如果用完数据块要重新申请数据块并更新addr数组信息
+/**
+ * @brief 根据下一个地址和地址的索引更新地址数组信息
+ *
+ * @param addr 存储地址的数组
+ * @param next_addr 用于存储下一个地址的指针
+ * @param next_addr_idx 用于存储下一个地址的索引的指针
+ * @param flag 操作标志，1表示只读取数据块，2表示用完数据块要重新申请数据块并更新addr数组信息
+ */
 void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag)
 {
     struct data_block* direct_data_blk = NULL;
@@ -732,18 +833,22 @@ void update_addr(short addr[7], short* next_addr, short* next_addr_idx, int flag
     }
 }
 
-
-// 开始创建目录
-// 1.创建inode
-// 2.分配inode中的addr数组
-// 3.将inode放入inode数据区
-// 4.更新inode位图区
-// 5.创建dir_entry对象
-// 6.将dir_entry放入数据区，更新根目录的大小以及addr地址并更新数据位图区以及将根目录信息重新写入文件系统
-// 7.更新数据位图区
-// type=1 表示创建目录
-// type=2 表示创建文件
-static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int type,const char* new_name)
+/**
+ * @brief 创建目录或文件，并更新文件系统中的相关信息。
+ * 1.创建inode
+ * 2.分配inode中的addr数组
+ * 3.将inode放入inode数据区
+ * 4.更新inode位图区
+ * 5.创建dir_entry对象
+ * 6.将dir_entry放入数据区，更新根目录的大小以及addr地址并更新数据位图区以及将根目录信息重新写入文件系统
+ * 7.更新数据位图区
+ * @param parent_inode 父目录的inode结构指针。
+ * @param mode 文件模式。
+ * @param type 创建的类型，1表示创建目录，2表示创建文件。
+ * @param new_name 新目录或文件的名称。
+ * @return 成功返回0，失败返回-1。
+ */
+static int create_dir_or_file_really(struct inode* parent_inode, mode_t mode, int type,const char* new_name)
 {
     // 创建inode
     struct inode new_inode;
@@ -893,7 +998,9 @@ static int real_create_dir_or_file(struct inode* parent_inode, mode_t mode, int 
 }
 
 
-// 读取超级块的内容
+/**
+ * @brief 读取超级块的内容。
+ */
 void get_sb_info() 
 {
     // PRINTF_FLUSH("get_sb_info begin\n");
@@ -904,7 +1011,12 @@ void get_sb_info()
 }
 
 
-// 将根目录inode加载到内存
+/**
+ * @brief 将根目录inode加载到内存。
+ * 
+ * @param tmp_node 用于存储根目录inode的结构指针。
+ * @return 成功返回0，失败返回-1。
+ */
 int get_root_inode(struct inode* tmp_node)
 {
     // PRINTF_FLUSH("get_root_inode begin\n");
@@ -931,7 +1043,13 @@ int get_root_inode(struct inode* tmp_node)
     
 }
 
-// 根据存放了目录项的数据块提取出所有文件名或者目录名，返回总的文件名或目录名个数
+/**
+ * @brief 根据存放了目录项的数据块提取出所有文件名或者目录名，返回总的文件名或目录名个数。
+ * 
+ * @param file_fullnames 用于存储文件名或目录名的字符串数组。
+ * @param data_blk 包含目录项的数据块。
+ * @return 成功返回总的文件名或目录名个数，失败返回-1。
+ */
 int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk)
 {
     FILE* file_des = get_file_singleton();
@@ -964,7 +1082,14 @@ int getFileFullNameByDataBlock(char* file_fullnames, struct data_block* data_blk
     return i;
 }
 
-// 根据父目录的inode得到目标文件或目录的inode
+/**
+ * @brief 根据父目录的inode得到目标文件或目录的inode。
+ * 
+ * @param dir_file_name 目标文件或目录的名称。
+ * @param parent_inode 父目录的inode结构指针。
+ * @param target_inode 用于存储目标文件或目录的inode结构指针。
+ * @return 成功返回0，目标不存在返回-ENOENT，读取数据块失败返回-1。
+ */
 int get_target_by_parent_inode(const char* dir_file_name, struct inode* parent_inode, struct inode* target_inode)
 {
     int addr_num = sizeof(parent_inode->addr) / sizeof(parent_inode->addr[0]);
@@ -1028,7 +1153,16 @@ int get_target_by_parent_inode(const char* dir_file_name, struct inode* parent_i
 }
 
 
-// 在父目录下创建文件
+/**
+ * @brief 在父目录下创建文件。
+ * 
+ * @param parent_dir 父目录的名称。
+ * @param new_filename 新文件的名称。
+ * @param data_blk 包含目录项的数据块。
+ * @param type 创建的类型，1表示创建目录，2表示创建文件。
+ * @param mode 文件模式。
+ * @return 成功返回0，失败返回-1。
+ */
 int create_file_under_pardir(const char* parent_dir,const char* new_filename, struct data_block* data_blk, int type, mode_t mode)
 {
     // PRINTF_FLUSH("在父目录下创建文件......\n");
@@ -1049,10 +1183,18 @@ int create_file_under_pardir(const char* parent_dir,const char* new_filename, st
     struct inode parent_inode;
     fread(&parent_inode, sizeof(struct inode), 1, file_des);
     // 检查是否有重名的文件
-    return real_create_dir_or_file(&parent_inode, mode, type, new_filename);
+    return create_dir_or_file_really(&parent_inode, mode, type, new_filename);
 }
 
-
+/**
+ * @brief 根据祖父inode得到目标inode。
+ * 
+ * @param parent_dir 父目录的名称。
+ * @param dir_file_name 目标文件或目录的名称。
+ * @param par_parent_inode 祖父目录的inode结构指针。
+ * @param target_inode 用于存储目标文件或目录的inode结构指针。
+ * @return 成功返回0，目标不存在返回-ENOENT，读取数据块失败返回-1。
+ */
 int get_target_by_granpa_inode(const char* parent_dir, const char* dir_file_name, struct inode* par_parent_inode, struct inode* target_inode)
 {
     PRINTF_FLUSH("第一次查找父目录：%s\n", parent_dir);
@@ -1078,8 +1220,14 @@ int get_target_by_granpa_inode(const char* parent_dir, const char* dir_file_name
     return 0;
 }
 
-// 创建文件或目录
-// type=1表示目录，type=2表示文件
+/**
+ * @brief 创建文件或目录。
+ * 
+ * @param path 要创建的文件或目录的路径。
+ * @param mode 文件或目录的权限模式。
+ * @param type 创建的类型，1表示创建目录，2表示创建文件。
+ * @return 成功返回0，目标已存在返回-EEXIST，其他错误返回相应错误码。
+ */
 static int create_dir_or_file (const char *path, mode_t mode, int type)
 {
     if (type == 1)
@@ -1127,7 +1275,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         // 如果是创建目录，说明可以创建，在根目录下创建
         free(target_inode);
         target_inode = NULL;
-        return real_create_dir_or_file(&root_inode, mode, 1, m_paths.new_dir_file_fullname);
+        return create_dir_or_file_really(&root_inode, mode, 1, m_paths.new_dir_file_fullname);
     }
     // 如果是创建文件，检查根目录下是否有父目录
     else
@@ -1166,7 +1314,7 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
         // PRINTF_FLUSH("父目录inode为：%hd\n", parent_inode->st_ino);
         free(target_inode);
         target_inode = NULL;
-        int ret = real_create_dir_or_file(parent_inode, mode, 2, m_paths.new_dir_file_fullname);
+        int ret = create_dir_or_file_really(parent_inode, mode, 2, m_paths.new_dir_file_fullname);
         free(parent_inode);
         parent_inode = NULL;
         return ret;
@@ -1174,7 +1322,14 @@ static int create_dir_or_file (const char *path, mode_t mode, int type)
 
 }
 
-// 删除文件或目录的辅助函数
+/**
+ * @brief 删除文件或目录的辅助函数。
+ * 
+ * @param dir_file_name 要删除的文件或目录的名称。
+ * @param parent_inode 父目录的inode结构指针。
+ * @param type 删除的类型，1表示删除目录，2表示删除文件。
+ * @return 成功返回0，目标不存在返回-ENOENT，目录非空返回-ENOTEMPTY，不是目录返回-ENOTDIR，其他错误返回相应错误码。
+ */
 int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
 {
     int addr_num = sizeof(parent_inode->addr) / sizeof(parent_inode->addr[0]);
@@ -1272,8 +1427,13 @@ int remove_help(const char *dir_file_name, struct inode* parent_inode, int type)
     return -ENOENT;
 }
 
-// 删除文件或目录接口
-// type=1表示目录，type=2表示文件
+/**
+ * @brief 删除文件或目录的接口。
+ * 
+ * @param path 要删除的文件或目录的路径。
+ * @param type 删除的类型，1表示删除目录，2表示删除文件。
+ * @return 成功返回0，目标不存在返回-ENOENT，目录非空返回-ENOTEMPTY，不是目录返回-ENOTDIR，其他错误返回相应错误码。
+ */
 static int remove_dir_or_file (const char *path, int type)
 {
     if (type == 1)
@@ -1329,10 +1489,14 @@ static int remove_dir_or_file (const char *path, int type)
 
 }
 
-
-
-
-// 根据父目录inode，将目录的所有目录项名装填进buf
+/**
+ * @brief 根据父目录inode，将目录的所有目录项名装填进buf。
+ * 
+ * @param par_parent_inode 父目录的inode。
+ * @param filler FUSE提供的回调函数，用于将文件或目录名填充到文件系统。
+ * @param buf 用于填充文件或目录名的缓冲区。
+ * @return 成功返回0，失败返回相应错误码。
+ */
 int fill_fullname_by_parent_inode(struct inode* par_parent_inode, fuse_fill_dir_t* filler, void *buf)
 {
     int addr_num = sizeof(par_parent_inode->addr) / sizeof(par_parent_inode->addr[0]);

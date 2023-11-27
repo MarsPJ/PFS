@@ -2,9 +2,15 @@
 
 
 /**
- * 获得文件或目录的基本属性
+ * @brief 获取文件或目录的基本属性
  * 基本思路参照提交的课程设计报告书
-*/
+ *
+ * @param path 文件或目录的路径
+ * @param stbuf 存储文件或目录属性的结构体指针
+ * @param fi 文件信息，包含文件打开的信息
+ * 
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
     PRINTF_FLUSH("pzj_getattr begin\n");
@@ -103,9 +109,18 @@ static int pzj_getattr(const char *path, struct stat *stbuf, struct fuse_file_in
 }
 
 /**
- * 读取目录信息
+ * @brief 读取目录信息
  * 基本思路参照提交的课程设计报告书
-*/
+ *
+ * @param path 目录的路径
+ * @param buf 用于填充目录信息的缓冲区
+ * @param filler 用于向缓冲区填充目录项的回调函数
+ * @param offset 在目录流中的偏移量
+ * @param fi 文件信息，包含文件打开的信息
+ * @param flags 读取目录的标志位
+ * 
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
     PRINTF_FLUSH( "pzj_readdir	 path : %s \n", path);
@@ -147,18 +162,29 @@ int pzj_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
 
 
 /**
- * 创建目录
+ * @brief 创建目录
  * 基本思路参照提交的课程设计报告书
-*/
+ *
+ * @param path 目录的路径
+ * @param mode 创建目录时使用的权限模式
+ * 
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_mkdir (const char *path, mode_t mode)
 {
     return create_dir_or_file(path, mode, 1);
 }
 
 /**
- * 创建文件
+ * @brief 创建文件
  * 基本思路参照提交的课程设计报告书
-*/
+ *
+ * @param path 文件的路径
+ * @param mode 创建文件时使用的权限模式
+ * @param dev 设备号
+ * 
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_mknod (const char *path, mode_t mode, dev_t dev)
 {
     dev=0;
@@ -166,9 +192,15 @@ static int pzj_mknod (const char *path, mode_t mode, dev_t dev)
 }
 
 /**
- * 更新访问时间
- * 基本思路参照提交的课程设计报告书
-*/
+ * @brief 更新文件或目录的访问时间
+ * 基本思路参照提交的课程设计报告书。
+ *
+ * @param path 文件或目录的路径
+ * @param tv   包含要设置的访问时间和修改时间的 timespec 数组
+ * @param fi   FUSE 文件信息结构指针，用于访问文件的有关信息
+ *
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi) 
 {   
     PRINTF_FLUSH("pzj_utimens begin\n");
@@ -229,28 +261,44 @@ static int pzj_utimens(const char *path, const struct timespec tv[2], struct fus
 }
 
 /**
- * 删除目录
- * 基本思路参照提交的课程设计报告书
-*/
+ * @brief 删除目录
+ * 基本思路参照提交的课程设计报告书。
+ *
+ * @param path 要删除的目录的路径
+ *
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
+
 static int pzj_rmdir (const char *path)
 {
     return remove_dir_or_file(path, 1);
 }
 
 /**
- * 删除文件
- * 基本思路参照提交的课程设计报告书
-*/
+ * @brief 删除文件
+ * 基本思路参照提交的课程设计报告书。
+ *
+ * @param path 要删除的文件的路径
+ *
+ * @return 成功时返回0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_unlink (const char *path)
 {
     return remove_dir_or_file(path, 2);
 }
 
 /**
- * 读文件
- * 基本思路参照提交的课程设计报告书
-*/
-// size是用户要读取的数据大小，offset是文件偏移指针
+ * @brief 读取文件内容
+ * 基本思路参照提交的课程设计报告书。
+ *
+ * @param path 文件的路径
+ * @param buf  用于存储读取内容的缓冲区
+ * @param size 用户要读取的数据大小
+ * @param offset 文件偏移指针，指示从文件的哪个位置开始读取
+ * @param fi   FUSE 文件信息结构指针，用于访问文件的有关信息
+ *
+ * @return 成功返回读取的字节数，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
     PRINTF_FLUSH("pzj_read! size: %lu, offset: %ld\n", size, offset);
@@ -328,9 +376,17 @@ static int pzj_read(const char *path, char *buf, size_t size, off_t offset, stru
 }
 
 /**
- * 写文件
- * 基本思路参照提交的课程设计报告书
-*/
+ * @brief 写入文件内容
+ * 基本思路参照提交的课程设计报告书。
+ *
+ * @param path    文件的路径
+ * @param buf     包含要写入文件的数据的缓冲区
+ * @param size    要写入的数据大小
+ * @param offset  文件偏移指针，指示从文件的哪个位置开始写入
+ * @param fi      FUSE 文件信息结构指针，用于访问文件的有关信息
+ *
+ * @return 成功返回写入的字节数，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_write (const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
     PRINTF_FLUSH("pzj_write %s\n", path);
@@ -427,9 +483,13 @@ static int pzj_write (const char *path, const char *buf, size_t size, off_t offs
 }
 
 /**
- * 打开文件
- * 基本思路参照提交的课程设计报告书
-*/
+ * @brief 打开文件
+ *
+ * @param path 文件的路径
+ * @param fi   FUSE 文件信息结构指针，用于访问文件的有关信息
+ *
+ * @return 成功返回 0，错误时返回相应的负值（用于FUSE文件系统）
+ */
 static int pzj_open(const char *path, struct fuse_file_info *fi)
 {
     return 0;
@@ -437,18 +497,26 @@ static int pzj_open(const char *path, struct fuse_file_info *fi)
 
 
 /**
- * 权限检查
- * 按照默认即可
-*/
+ * @brief 权限检查
+ *
+ * @param path 文件或目录的路径
+ * @param flag 权限标志，用于指定检查的权限类型
+ *
+ * @return 默认返回 0
+ */
 static int pzj_access(const char *path, int flag)
 {
 	return 0;
 }
 
 /**
- * 初始化
- * 基本思路参照提交的课程设计报告书
-*/
+ * @brief 初始化文件系统
+ *
+ * @param conn_info FUSE 连接信息结构指针，用于配置文件系统的连接信息
+ * @param config    FUSE 配置信息结构指针，用于配置文件系统的相关参数
+ *
+ * @return 无返回值
+ */
 void * pzj_init(struct fuse_conn_info * conn_info, struct fuse_config * config) 
 {
     get_sb_info();
@@ -456,8 +524,9 @@ void * pzj_init(struct fuse_conn_info * conn_info, struct fuse_config * config)
 }
 
 /**
- * 注册并实现的函数
-*/
+ * @brief 注册并实现的文件系统操作
+ *
+ */
 static struct fuse_operations pzj_oper = {
     .init = pzj_init,       // 初始化函数
     .getattr = pzj_getattr, // 获取文件或目录属性函数
